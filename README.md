@@ -5,6 +5,6 @@ Welcome to the Scorpio project! This repository contains advanced tools for trai
 
 
 ## Tutorials
-
-The  [GitHub Wiki](https://github.com/MsAlEhR/Scorpio.wiki.git) also contains tutorials to help you learn how to use Scorpio tools with real data:
+iki
+The  [GitHub Wiki](https://github.com/MsAlEhR/Scorpio/wiki) also contains tutorials to help you learn how to use Scorpio tools with real data:
 
