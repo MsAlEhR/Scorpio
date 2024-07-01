@@ -5,6 +5,7 @@ Welcome to the Scorpio project! This repository contains advanced tools for trai
 <p align="center">
   <img src="scorpio_logo.webp" alt="Scorpio Logo" width="340" height="340">
 </p>
+
 ## Tutorials
 
 The [GitHub Wiki](https://github.com/MsAlEhR/Scorpio/wiki) also contains tutorials to help you learn how to use Scorpio tools with real data.
