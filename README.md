@@ -7,7 +7,7 @@ Welcome to the Scorpio project! This repository contains advanced tools for trai
 
 Drexel University EESI Lab, 2024
 
-Maintainer: Refahi, Mohammad Saleh
+Maintainer:  Mohammad Saleh Refahi
 
 Owner: Gail Rosen, gailr at ece dot drexel dot edu
 
