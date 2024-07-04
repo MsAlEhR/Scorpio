@@ -7,10 +7,6 @@ Welcome to the Scorpio project! This repository contains advanced tools for trai
 
 Drexel University EESI Lab
 
-Maintainer:  Mohammad Saleh Refahi
-
-Owner: Gail Rosen, gailr at ece dot drexel dot edu
-
 
 <p align="center">
   <img src="scorpio_logo.webp" alt="Scorpio Logo" width="340" height="340">
