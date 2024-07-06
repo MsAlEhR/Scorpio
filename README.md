@@ -8,7 +8,7 @@ Welcome to the Scorpio project! This repository contains advanced tools for trai
 
 
 <p align="center">
-  <img src="scorpio_logo.webp" alt="Scorpio Logo" width="340" height="340">
+  <img src="scorpio_logo.webp" alt="Scorpio Logo" width="300" height="300">
 </p>
 
 ## Tutorials
