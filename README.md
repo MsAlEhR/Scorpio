@@ -5,7 +5,6 @@
 
 Welcome to the Scorpio project! This repository contains advanced tools for training triplet networks using contrastive learning on metagenomic data with hierarchical information, as well as for creating databases for the Scorpio model. 
 
-Drexel University EESI Lab
 
 
 <p align="center">
