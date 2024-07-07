@@ -44,7 +44,7 @@ You can set up the environment for `scorpio` using either a conda environment or
 
     ```bash
     docker pull msalehre/scorpio
-    docker run -it msalehr/scorpio
+    docker run -it msalehre/scorpio
     ```
 
 After following the steps for either method, your environment should be set up and ready to use the `scorpio` tool.
