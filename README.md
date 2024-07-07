@@ -22,7 +22,6 @@ You can set up the environment for `scorpio` using either a conda environment or
 1. **Create a conda environment named `scorpio` based on the environment file in the `src` directory:**
 
     ```bash
-    cd src
     conda env create -f src/environment.yml -n scorpio
     ```
 
