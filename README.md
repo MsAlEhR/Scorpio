@@ -6,9 +6,7 @@
 
 Welcome to the Scorpio project! This repository contains advanced tools for training triplet networks using contrastive learning on diverse DNA sequences and data from promoter detection, phylogenomic analysis, antimicrobial resistance (AMR) detection, and other hierarchical information, which can improve downstream analysis and insights.
 
-<p align="center">
-  <img src="scorpio_logo.webp" alt="Scorpio Logo" width="300" height="300">
-</p>
+
 
 ## Tutorials
 
