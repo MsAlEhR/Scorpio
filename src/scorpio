@@ -1,0 +1,24 @@
+#!/bin/bash
+
+COMMAND=$1
+shift
+
+case "$COMMAND" in
+  createdb)
+    python /opt/conda/envs/scorpio-dna/bin/createdb.py "$@"
+    ;;
+  triplet_trainer)
+    python /opt/conda/envs/scorpio-dna/bin/triplet_trainer.py "$@"
+    ;;
+  inference)
+    python /opt/conda/envs/scorpio-dna/bin/inference.py "$@"
+    ;;
+  confidence_score)
+    python /opt/conda/envs/scorpio-dna/bin/confidence_score.py "$@"
+    ;;
+  *)
+    echo "Unknown command: $COMMAND"
+    echo "Available commands: createdb, triplet_trainer, inference, confidence_score"
+    exit 1
+    ;;
+esac

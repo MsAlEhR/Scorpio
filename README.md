@@ -14,3 +14,41 @@ Welcome to the Scorpio project! This repository contains advanced tools for trai
 ## Tutorials
 
 The [GitHub Wiki](https://github.com/MsAlEhR/Scorpio/wiki) also contains tutorials to help you learn how to use Scorpio tools with real data.
+
+
+## Installation
+
+You can set up the environment for `scorpio` using either a virtual environment or a Docker image. Follow the instructions below for your preferred method:
+
+### Method 1: Virtual Environment
+
+1. **Create a virtual environment named `scorpio` based on the environment file in the `src` directory:**
+
+    ```bash
+    python -m venv scorpio
+    source scorpio/bin/activate
+    pip install -r src/requirements.txt
+    ```
+
+2. **Activate the virtual environment:**
+
+    ```bash
+    source scorpio/bin/activate
+    ```
+
+3. **Run the setup script to add `scorpio` to your PATH:**
+
+    ```bash
+    ./setup.sh
+    ```
+
+### Method 2: Docker
+
+1. **Download and run the Docker image:**
+
+    ```bash
+    docker pull msalehr/scorpio
+    docker run -it msalehr/scorpio
+    ```
+
+After following the steps for either method, your environment should be set up and ready to use the `scorpio` tool.
