@@ -34,7 +34,7 @@ You can set up the environment for `scorpio` using either a conda environment or
 3. **Run the setup script to add `scorpio` to your PATH:**
 
     ```bash
-    ./setup.sh
+    ./src/setup.sh
     ```
 
 ### Method 2: Docker
