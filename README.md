@@ -2,6 +2,7 @@
 
 ![GitHub language](https://img.shields.io/github/languages/top/MsAlEhR/Scorpio)
 ![GitHub license](https://img.shields.io/github/license/MsAlEhR/Scorpio)
+![GitHub All Releases](https://img.shields.io/github/downloads/MsAlEhR/Scorpio/total)
 
 Welcome to the Scorpio project! This repository contains advanced tools for training triplet networks using contrastive learning on diverse DNA sequences and data from promoter detection, phylogenomic analysis, antimicrobial resistance (AMR) detection, and other hierarchical information, which can improve downstream analysis and insights.
 
