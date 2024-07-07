@@ -5,8 +5,6 @@
 
 Welcome to the Scorpio project! This repository contains advanced tools for training triplet networks using contrastive learning on data with hierarchical information, as well as for creating databases for the Scorpio model. 
 
-
-
 <p align="center">
   <img src="scorpio_logo.webp" alt="Scorpio Logo" width="300" height="300">
 </p>
@@ -15,25 +13,23 @@ Welcome to the Scorpio project! This repository contains advanced tools for trai
 
 The [GitHub Wiki](https://github.com/MsAlEhR/Scorpio/wiki) also contains tutorials to help you learn how to use Scorpio tools with real data.
 
-
 ## Installation
 
-You can set up the environment for `scorpio` using either a virtual environment or a Docker image. Follow the instructions below for your preferred method:
+You can set up the environment for `scorpio` using either a conda environment or a Docker image. Follow the instructions below for your preferred method:
 
-### Method 1: Virtual Environment
+### Method 1: Conda Environment
 
-1. **Create a virtual environment named `scorpio` based on the environment file in the `src` directory:**
+1. **Create a conda environment named `scorpio` based on the environment file in the `src` directory:**
 
     ```bash
-    python -m venv scorpio
-    source scorpio/bin/activate
-    pip install -r src/requirements.txt
+    cd src
+    conda env create -f src/environment.yml -n scorpio
     ```
 
-2. **Activate the virtual environment:**
+2. **Activate the conda environment:**
 
     ```bash
-    source scorpio/bin/activate
+    conda activate scorpio
     ```
 
 3. **Run the setup script to add `scorpio` to your PATH:**
