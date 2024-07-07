@@ -43,7 +43,7 @@ You can set up the environment for `scorpio` using either a conda environment or
 1. **Download and run the Docker image:**
 
     ```bash
-    docker pull msalehr/scorpio
+    docker pull msalehre/scorpio
     docker run -it msalehr/scorpio
     ```
 
