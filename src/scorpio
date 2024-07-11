@@ -5,16 +5,16 @@ shift
 
 case "$COMMAND" in
   createdb)
-    python /opt/conda/envs/scorpio-dna/bin/createdb.py "$@"
+    python /opt/conda/envs/scorpio/bin/createdb.py "$@"
     ;;
   triplet_trainer)
-    python /opt/conda/envs/scorpio-dna/bin/triplet_trainer.py "$@"
+    python /opt/conda/envs/scorpio/bin/triplet_trainer.py "$@"
     ;;
   inference)
-    python /opt/conda/envs/scorpio-dna/bin/inference.py "$@"
+    python /opt/conda/envs/scorpio/bin/inference.py "$@"
     ;;
   confidence_score)
-    python /opt/conda/envs/scorpio-dna/bin/confidence_score.py "$@"
+    python /opt/conda/envs/scorpio/bin/confidence_score.py "$@"
     ;;
   *)
     echo "Unknown command: $COMMAND"
