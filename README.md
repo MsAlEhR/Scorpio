@@ -2,7 +2,7 @@
 
 ![GitHub language](https://img.shields.io/github/languages/top/MsAlEhR/Scorpio)
 ![GitHub license](https://img.shields.io/github/license/MsAlEhR/Scorpio)
-![Docker Pulls](https://img.shields.io/docker/pulls/msalehre/scorpio)
+![Docker Pulls](https://img.shields.io/docker/pulls/eesilab/scorpio)
 
 Welcome to the Scorpio project! This repository contains advanced tools for training triplet networks using contrastive learning on diverse DNA sequences and data from promoter detection, phylogenomic analysis, antimicrobial resistance (AMR) detection, and any hierarchical information, which can improve downstream analysis and insights.
 
@@ -43,8 +43,8 @@ You can set up the environment for `scorpio` using either a conda environment or
 1. **Download and run the Docker image:**
 
     ```bash
-    docker pull msalehre/scorpio
-    docker run -it msalehre/scorpio
+    docker pull eesilab/scorpio
+    docker run -it eesilab/scorpio
     ```
 
 After following the steps for either method, your environment should be set up and ready to use the `scorpio` tool.
