@@ -49,3 +49,16 @@ You can set up the environment for `scorpio` using either a conda environment or
     ```
 
 After following the steps for either method, your environment should be set up and ready to use the `scorpio` tool.
+
+
+
+## Get Involved
+We encourage community involvement and welcome contributions to the Scorpio project (Report Issues, Submit Pull Requests, Join Discussions).
+
+Please email us for any inquiries.
+
+Maintainer:
+Saleh Refahi (sr3622 at drexel dot edu)
+
+Owner:
+Gail Rosen (gailr26 at drexel dot edu)
