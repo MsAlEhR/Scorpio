@@ -7,12 +7,10 @@ from pathlib import Path
 import time
 import random
 import copy
-import h5py
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from sklearn import manifold
 import pandas as pd
-import os
 import faiss
 import argparse
 from TripletModel import AveragePool1dAlongAxis,Tuner
@@ -48,12 +46,12 @@ def read_fasta(file_path):
                     current_sequence = []
                 
                 # Regular expression pattern to extract the index string
-                pattern = r'seqid|(\d+)'
+                pattern = r'seqid\|(\d+)'
                 current_header_match = re.search(pattern, line)
                 if current_header_match is not None:
                     index_string = current_header_match.group(1)  # Extract the matched string
                     current_header = int(index_string)
-                    x_header.append(int(index_string))  # Convert to integer and append to x_header
+                    x_header.append(current_header)  # Convert to integer and append to x_header
                 else:
                     current_header = indx
                     x_header.append(indx)
@@ -317,10 +315,7 @@ def perform_search(index, dataset, indices,train_indices,number_hit=1):
 def main(batch_size, max_len, output, scorpio_model, db_fasta, db_embedding, cal_kmer_freq, val_fasta, metadata, val_embedding, num_distance):
 
     model_name = f"{scorpio_model}"
-    weights_p = model_name+"/checkpoint.pt"
-
-
-    os.makedirs(output, exist_ok=True)
+    weights_p =os.path.join(model_name, 'checkpoint.pt')
     
     raw_embedding_train,raw_embedding_test,train_indices,test_indices  = load_data(max_len,db_fasta,val_fasta,cal_kmer_freq)
 
@@ -362,19 +357,21 @@ def main(batch_size, max_len, output, scorpio_model, db_fasta, db_embedding, cal
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Scorpio Create Db Command Line Program")
-    parser.add_argument("--scorpio_model", type=str, help="Scorpio model Path")
-    parser.add_argument("--output", type=str, help="Output DB Folder")
-    parser.add_argument("--db_fasta", type=str, help="Fasta File")
-    parser.add_argument("--val_fasta", type=str, help="Validation Fasta File", default="./data/data-amr/train.fasta")
-    parser.add_argument("--max_len", type=int, help="Maximum Length of Sequence")
-    parser.add_argument("--batch_size", type=int, help="Batch size", default=60)
-    parser.add_argument("--db_embedding", type=str, help="Embedding File", default="")
-    parser.add_argument("--val_embedding", type=str, help="Validation Embedding File", default="")
-    parser.add_argument("--metadata", type=str, help="Metadata File", default="")
-    parser.add_argument('--cal_kmer_freq', type=str2bool, default=False, help='Calculate Kmer Frequency')
-    parser.add_argument('--num_distance', type=int, default=2000, help='Number of Distances')
+    parser.add_argument("--scorpio_model", type=str, help="Path to the Scorpio model file. This argument is required.", required=True)
+    parser.add_argument("--output", type=str, help="Directory to save the output database files. This argument is required.", required=True)
+    parser.add_argument("--db_fasta", type=str, help="Path to the input FASTA file for the database.", required=True)
+    parser.add_argument("--val_fasta", type=str, help="Path to the validation FASTA file.", required=True)
+    parser.add_argument("--metadata", type=str, help="Path to the metadata file containing additional information about the sequences. Default is an empty string.",required=True)
+    parser.add_argument("--max_len", type=int, help="Maximum allowed length of sequences. Sequences longer than this will be truncated.")
+    parser.add_argument("--batch_size", type=int, help="Number of sequences to process in a single batch. Default is 60.", default=60)
+    parser.add_argument("--db_embedding", type=str, help="Path to the embedding file for the database sequences. Default is an empty string.", default="")
+    parser.add_argument("--val_embedding", type=str, help="Path to the embedding file for the validation sequences. Default is an empty string.", default="")
+    parser.add_argument('--cal_kmer_freq', type=str2bool, default=False, help="Boolean flag to indicate whether to calculate k-mer frequency. Default is False.")
+    parser.add_argument('--num_distance', type=int, default=2000, help="Number of distances to be calculated. Default is 2000.")
 
     args = parser.parse_args()
+
+    os.makedirs(args.output, exist_ok=True)
 
     save_args_to_yaml(args, f'{args.output}/params.yaml')
 

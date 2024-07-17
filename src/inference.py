@@ -7,7 +7,6 @@ from pathlib import Path
 import time
 import random
 import copy
-import h5py
 from tqdm import tqdm
 import pandas as pd
 import os
@@ -250,18 +249,16 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Scorpio Inference Command Line Program")
     
-    parser.add_argument("--db_path", type=str, required=True, help="Database Path")
-    parser.add_argument('--number_hit', type=int,required=True,  help='Number of Hits',default=1)
-    parser.add_argument("--test_fasta", type=str, required=True, help="Test Fasta File")
-    parser.add_argument("--test_embedding", type=str, help="Test Embedding File",default="")
-    parser.add_argument("--output", type=str, help="Output Folder",required=True)
+    parser.add_argument("--db_path", type=str, required=True, help="Path to the database.")
+    parser.add_argument("--number_hit", type=int, required=True, default=1, help="Number of hits to be retrieved. Default is 1.")
+    parser.add_argument("--test_fasta", type=str, required=True, help="Path to the test FASTA file.")
+    parser.add_argument("--test_embedding", type=str, default="", help="Path to the test embedding file. Default is an empty string.")
+    parser.add_argument("--output", type=str, required=True, help="Directory to save the output files.")
+    parser.add_argument("--scorpio_model", type=str, help="Path to the Scorpio model file.")
+    parser.add_argument("--max_len", type=int, help="Maximum allowed length of sequences. Sequences longer than this will be truncated.")
+    parser.add_argument("--batch_size", type=int, help="Number of sequences to process in a single batch.")
+    parser.add_argument("--cal_kmer_freq", type=str2bool, help="Boolean flag to indicate whether to calculate k-mer frequency.")
 
-    
-    parser.add_argument("--scorpio_model", type=str, help="Scorpio model Path")
-    parser.add_argument("--max_len", type=int, help="Maximum Length of Sequence")
-    parser.add_argument("--batch_size", type=int, help="Batch size")
-    parser.add_argument('--cal_kmer_freq', type=str2bool, help='Calculate Kmer Frequency')
-    
 
     args = parser.parse_args()
 

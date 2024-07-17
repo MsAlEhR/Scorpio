@@ -22,7 +22,7 @@ from TripletModel import Tuner
 import argparse
 from KmerTokenizer import KmerTokenizer
 from Bio import SeqIO
-from tqdm import tqdm
+
 def str2bool(v):
     if isinstance(v, bool):
         return v

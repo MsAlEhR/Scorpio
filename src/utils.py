@@ -9,26 +9,22 @@ https://github.com/Rostlab/EAT
 
 
 
-import numpy as np
-import time
-import random
+
 import torch
 import torch.utils.data
 import torch.nn as nn
 from torch.autograd import Variable
-import copy
+import torch.nn.functional as F
 import pandas as pd
-import h5py
-# The following settings will depend on your setup
-# matplotlib import & config
+
 import matplotlib.pyplot as plt
-import seaborn as sn
 import colorsys  
 from matplotlib.colors import to_hex
+
 import itertools  
-from sklearn.cluster import DBSCAN,KMeans
-from sklearn.metrics import homogeneity_score,accuracy_score
-import torch.nn.functional as F
+import numpy as np
+import time
+import random
 import copy
 from tqdm import tqdm
 from Bio import SeqIO
@@ -427,7 +423,7 @@ class plotter():
             'axes.labelsize': 13,  # increase font size for axis labels
         }
         plt.rc(params)  # apply parameters
-        return plt, sn
+        return plt, None
 
     def merge_pdfs(self, pdf1_path, pdf2_path, output_path):
         # Merge two PDFs
