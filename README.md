@@ -15,6 +15,16 @@ Welcome to the Scorpio project! This repository contains advanced tools for trai
 
 The [GitHub Wiki](https://github.com/MsAlEhR/Scorpio/wiki) also contains tutorials to help you learn how to use Scorpio tools with real data.
 
+## Training Data
+
+For training the gene-taxa model with full genes, we have included the data in this Zenodo record: [Zenodo](https://zenodo.org/record/12175913). Please follow the instructions below to fully download the data. This data can be used with the `triplet_trainer` to train and save the model:
+
+```bash
+wget https://zenodo.org/api/records/12175913/files-archive -O scorpio-gene-taxa.zip
+unzip scorpio-gene-taxa.zip -d scorpio-gene-taxa
+```
+
+
 ## Installation
 
 You can set up the environment for `scorpio` using either a conda environment or a Docker image. Follow the instructions below for your preferred method:
