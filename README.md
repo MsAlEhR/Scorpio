@@ -60,6 +60,23 @@ You can set up the environment for `scorpio` using either a conda environment or
 
 After following the steps for either method, your environment should be set up and ready to use the `scorpio` tool.
 
+Got it. Here's a more concise version focusing just on cloning the repository with Git LFS:
+
+
+## Cloning the Repository with Git LFS
+
+In this repository, we use Git Large File Storage (LFS) to manage large files. Please install LFS before cloning the repo:
+
+1. **Initialize Git LFS:**
+    ```bash
+    git lfs install
+    ```
+2. **Clone the repository:**
+    ```bash
+    git clone <repository_url>
+    ```
+
+
 
 
 ## Get Involved
