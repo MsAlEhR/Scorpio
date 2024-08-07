@@ -164,13 +164,9 @@ def calculate_kmer_frequencies(sequences,k=6):
     for i, sequence in tqdm(enumerate(sequences)):
         sequence_kmer_counts = Counter([sequence[j:j+k] for j in range(len(sequence) - k + 1)])
         for j, kmer in enumerate(possible_kmers):
-            frequencies[i, j] = sequence_kmer_counts[kmer]
+            frequencies[i, j] = sequence_kmer_counts[kmer]  / (4 ** k)
 
     return frequencies
-
-
-
-
 
 
 
@@ -220,6 +216,10 @@ def compute_embeddings(model, raw_embedding_test, raw_embedding_train,output,bat
     # Process test set
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
+    if isinstance(model, torch.nn.DataParallel):
+        model = model.module
+    
+
     model=model.to(device)
     model.eval()
     with torch.no_grad(): 
@@ -259,8 +259,6 @@ def create_index(embedding,ouput):
 def save_args_to_yaml(args, yaml_file):
     with open(yaml_file, 'w') as file:
         yaml.dump(vars(args), file, default_flow_style=False)
-
-
 
 
 

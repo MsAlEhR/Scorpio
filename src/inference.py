@@ -66,6 +66,10 @@ def compute_embeddings(model, raw_embedding_test,output,batch_size):
     # Process test set
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
+    if isinstance(model, torch.nn.DataParallel):
+        model = model.module
+    
+    
     model=model.to(device)
     model.eval()
     with torch.no_grad(): 
@@ -128,21 +132,15 @@ def check_match(index, level, metadata):
 
 
 
-# Define a function to calculate class probabilities for each level in levels
+# Define a function to calculate class probabilities for each level in levels , similar function in confidence_score.py with name cal_prob
 def calculate_confidence(x, levels):
     probabilities = {}
 
     for i,level in enumerate(levels):
-
-        ################ should delete further
-        probabilities[level + '_query'] = x[level + '_query'].iloc[0]
         
         # Get all unique classes in the target column for this level
         unique_classes = np.unique(x[level + '_target'])
 
-
-        ############# need to fix this based on the models !!!!!!!!!!!!!!!!!
-        # x[f'{level}_dist']=test_distance_confidence(model_list[i], list(x[2]))
         
         # Create a dictionary to store probabilities for each class
         class_probabilities = {}
@@ -165,10 +163,9 @@ def calculate_confidence(x, levels):
 
         # Store results
         probabilities[f"{level}_predicted"] = max_class.replace("probability_class_", "")
-        probabilities[f"{level}_probability"] = max_probability
+        probabilities[f"{level}_confidence_score"] = max_probability
+        probabilities[f"{level}_mean_dist_threshold"] = np.mean(x[f'{level}_dist'])
         
-        probabilities[f"{level}_dist"] = np.mean(x[x[level + '_target'] == cls][2])
-
     return pd.Series(probabilities)
 
 
@@ -221,7 +218,7 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
         result_df[f"{level}_dist"]=test_distance_confidence(model, result_df[2])
 
     
-    result_df.to_csv(f"{output}/Output.tsv",sep="\t")
+    result_df.to_csv(f"{output}/Output.tsv",sep="\t",index=False)
     
 
     hierarchy,_,metadata = extract_and_sort_headers(metadata)
@@ -229,11 +226,11 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
 
 
     for level in tqdm(hierarchy):
-        result_df[level + '_query'] = result_df.apply(lambda row: check_match(row[0], level, metadata), axis=1)
+        # result_df[level + '_query'] = result_df.apply(lambda row: check_match(row[0], level, metadata), axis=1)
         result_df[level + '_target'] = result_df.apply(lambda row: check_match(row[1], level, metadata), axis=1)
     
     
-    result_df.dropna(subset=[level + '_query' for level in hierarchy] + [level + '_target' for level in hierarchy], inplace=True)
+    result_df.dropna(subset=[level + '_target' for level in hierarchy], inplace=True)
 
     # Group by the first column (group_key)
     grouped = result_df.groupby(0)
@@ -242,7 +239,7 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
     
 
 
-    probabilities.to_csv(f"{output}/Prediction.tsv",sep="\t")
+    probabilities.to_csv(f"{output}/Prediction.tsv",sep="\t",index=False)
 
     
 

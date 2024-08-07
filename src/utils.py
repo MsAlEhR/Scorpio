@@ -9,7 +9,6 @@ https://github.com/Rostlab/EAT
 
 
 
-
 import torch
 import torch.utils.data
 import torch.nn as nn
@@ -28,6 +27,9 @@ import random
 import copy
 from tqdm import tqdm
 from Bio import SeqIO
+import faiss
+from concurrent.futures import ThreadPoolExecutor
+
 
 plt.switch_backend('agg')  # GPU is only available via SSH (no display)
 plt.clf()  # clear previous figures if already existing
@@ -42,14 +44,12 @@ class CustomDataset(torch.utils.data.Dataset):
         self.seq_id, self.embd = zip(
             *[(seq_id, embd) for seq_id, embd in train.items()])
 
-        self.id2label, self.label2id = datasplitter.parse_label_mapping_cath(
+        self.id2label, self.label2id = datasplitter.parse_label_mapping(
             set(train.keys()))
 
         # if classes should be sampled evenly (not all training samples are used in every epoch)
         if self.balanced_sampling:
-            print("Using balanced sampling!")
-            self.unique_labels = self.get_unique_labels()
-            self.data_len = len(self.unique_labels)
+            pass
         else:  # if you want to iterate over all training samples
             self.data_len = len(self.seq_id)
 
@@ -63,11 +63,7 @@ class CustomDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         if self.balanced_sampling:  # get a dataset class, instead of a trainings sample
-            c, a, t, h = self.unique_labels[index] # get dataset class
-            anchor_candidates = self.label2id[c][a][t][h] # get samples within this dataset class
-            anchor_id = random.choice(anchor_candidates) # randomly pick one of these samples as anchor
-            anchor = self.id2embedding[anchor_id] # retrieve embedding for this sample
-            anchor_label = self.id2label[anchor_id] # retrieve label for this sample
+           pass
         else:  # get a training sample (over-samples large dataset families according to occurance)
             anchor = self.embd[index] # get embedding of anchor
             anchor_id = self.seq_id[index] # get dataset ID of anchor
@@ -249,24 +245,25 @@ class CustomDataset(torch.utils.data.Dataset):
     
     
 class DataSplitter():
-    def __init__(self,data_dir, id2embedding,n_classes=4, verbose=True):
+    def __init__(self,data_dir, id2embedding,n_classes=4, verbose=True,num_workers=12):
         self.verbose = verbose
         self.data_dir = data_dir
         self.n_classes = n_classes
         self.cath_label_path = self.data_dir / 'hierarchical-level.txt'
         self.id2embedding = id2embedding
+        self.num_workers = num_workers
 
         if verbose:
             print('Loaded embeddings : {}'.format(
                 len(self.id2embedding)))
 
-        self.id2label, self.label2id = self.parse_label_mapping_cath(
+        self.id2label, self.label2id = self.parse_label_mapping(
                 set(self.id2embedding.keys()))
 
     def get_id2embedding(self):
         return self.id2embedding
 
-    def parse_label_mapping_cath(self, id_subset):
+    def parse_label_mapping(self, id_subset):
         id2label = dict()
         label2id = dict()
         with open(self.cath_label_path, 'r') as f:
@@ -304,63 +301,37 @@ class DataSplitter():
         return id2label, label2id
 
 
-            
-    def kmer_tokenize(self, seq_list, kmerlen=6, overlapping=True, maxlen=400):
-        
-        VOCAB = [''.join(i) for i in itertools.product(*(['ATCG'] * int(kmerlen)))]
-        VOCAB_SIZE = len(VOCAB) + 5  
-    
-        tokendict = dict(zip(VOCAB, range(5,VOCAB_SIZE)))
-        tokendict['[UNK]'] = 0
-        tokendict['[SEP]'] = 1
-        tokendict['[CLS]'] = 3
-        tokendict['[MASK]'] = 4
-        
-        tokendict['[PAD]'] = 4
-    
-        seq_ind_list = []
-        for seq in seq_list:
-            if overlapping:
-                stoprange = len(seq) - (kmerlen - 1)  
-                tokenlist = [tokendict[seq[k:k + kmerlen]] for k in range(0, stoprange) if set(seq[k:k + kmerlen]).issubset('ATCG')]
-            else:
-                stoprange = len(seq) - (kmerlen - 1)
-                tokenlist = [tokendict[seq[k:k + kmerlen]] for k in range(0, stoprange, kmerlen) if set(seq[k:k + kmerlen]).issubset('ATCG')]
-            # Padding if necessary
-            if len(tokenlist) < maxlen:
-                tokenlist.extend([tokendict['[PAD]']] * (maxlen - len(tokenlist)))
-            seq_ind_list.append(tokenlist[:maxlen])
-        return seq_ind_list
-    
-    
-
-
-
-    def read_cath_ids(self,path):
-        id_list = []
-        
-        with open(path, 'r') as f:
-            for record in SeqIO.parse(f, "fasta"):
-                header = record.id.split('|')
-                if len(header) > 1:
-                    seq_id = header[1]
-                    id_list.append(seq_id)
-        
-        return id_list    
-    
-
     def get_embeddings(self, fasta_path):
-        cath_ids = self.read_cath_ids(fasta_path)
-        embeddings = dict()
-        for cath_id in cath_ids:
-            try:
-                embd = self.id2embedding[cath_id]
-            except KeyError:
-                print('No embedding found for: {}'.format(cath_id))
-                continue
-            # embeddings[cath_id] = torch.tensor(embd).to(device)
-            embeddings[cath_id] = torch.tensor(embd)
-        return embeddings
+        ids = self.read_ids(fasta_path)
+    
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            embeddings = dict(executor.map(self.get_embedding_for_id, ids))
+    
+        return {k: v for k, v in embeddings.items() if v is not None}
+
+    def get_embedding_for_id(self, _id):
+        try:
+            embd = self.id2embedding[_id]
+            return _id, torch.tensor(embd)
+        except KeyError:
+            print('No embedding found for: {}'.format(_id))
+            return _id, None
+    
+    def read_ids(self, path):
+        with open(path, 'r') as f:
+            records = list(SeqIO.parse(f, "fasta"))
+        
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            id_list = list(executor.map(self.extract_id, records))
+        
+        return id_list
+    
+    def extract_id(self, record):
+        if '|' in record.id:
+            return record.id.split('|')[1]
+        return None
+
+    
 
     def get_predef_splits(self, p_train=None, p_test=None):
 
@@ -370,16 +341,28 @@ class DataSplitter():
             
         train = self.get_embeddings(p_train)        
         val = self.get_embeddings(p_val)
-        valLookup20 = train
+        
+        
+        train_keys = list(train.keys())
+
+        # Determine the number of samples for the validation lookup table
+        num_samples = int(len(train_keys) * 0.2)
+
+        # Randomly sample the training keys for the validation lookup table
+        sampled_keys = random.sample(train_keys, num_samples)
+        
+        val_lookup = {key: train[key] for key in sampled_keys}
+                
+        # valLookup20 = train
         
         if self.verbose:
             print('##########')
             print('Finished splitting data!')
             print('Train set size: {}'.format(len(train)))
             print('Val set size: {}'.format(len(val)))
-            print('ValLookup20 size: {}'.format(len(valLookup20)))
+            print('ValLookup20 size: {}'.format(len(val_lookup)))
             print('##########')
-        return train, val, valLookup20
+        return train, val,val_lookup
 
     
     
@@ -561,23 +544,23 @@ class plotter():
         plt.close(fig)  # close figure handle
         return None
 
-    
-    
 
 class Eval():
-    def __init__(self, lookup, test, datasplitter, n_classes, name='cath'):
-        self.lookup, self.lookupIdx2label = self.preproc(lookup)
-        self.test,   self.testIdx2label = self.preproc(test)
-        self.id2label, self.label2id = datasplitter.parse_label_mapping_cath(
+    def __init__(self, lookup, test, datasplitter, n_classes, name='Eval'):
+        # self.lookup, self.lookupIdx2label = self.preproc(lookup)
+        self.lookupIdx2label = self.preproc(lookup)
+        self.testIdx2label = self.preproc(test)
+        self.test = torch.tensor(np.array(list(test.values()))).squeeze(dim=1)
+        self.lookup = torch.tensor(np.array(list(lookup.values()))).squeeze(dim=1)
+        self.id2label, self.label2id = datasplitter.parse_label_mapping(
             # use only keys from the given lookup set
             set(lookup.keys()) | set(test.keys()),
         )
         self.name = name
-        #self.log  = self.init_log()
         self.n_classes = n_classes
         self.accs = self.init_log()
         self.errs = self.init_log()
-        self.distance = torch.nn.PairwiseDistance(p=2)
+
 
     def get_test_set(self):
         return self.test
@@ -603,44 +586,28 @@ class Eval():
             confmat = np.zeros((1, 2, 2))
             confmats.append(confmat)
         confmats = np.concatenate(confmats, axis=0)
-        return confmats
+        return confmats 
 
     def preproc(self, data):
         idx2label = dict()
-        dataset = list()
         for idx, (seq_id, embd) in enumerate(data.items()):
             idx2label[idx] = seq_id
-            dataset.append(embd)
-        dataset = torch.cat(dataset, dim=0)
-        return dataset, idx2label
+        # dataset = torch.cat(dataset, dim=0)
+        return idx2label
 
     def add_sample(self, y, yhat, confmats):
-        wrong = False
-
-        for class_lvl, true_class in enumerate(y):  # for each prediction
-            # skip cases where the test protein did not have had any nn in lookupDB
-            # --> It is by defnition not possible that those could be predicted correctly
+        for class_lvl, true_class in enumerate(y):
             if np.isnan(true_class):
                 continue
             if true_class == yhat[class_lvl]:
-                correct = 1  # count only those in
-            else:  # if there is a wrong p[rediction on this level, lower-lvls are wrong by definition
+                correct = 1
+            else:
                 correct = 0
-                # wrong = True
             confmats[class_lvl, correct, correct] += 1
         return confmats
 
-    def pdist(self, sample_1, sample_2, norm=2):
-        ################################## I added this to deal with tensor
-        if sample_1.dim()>2:
-            sample_1 = sample_1.mean(axis=1)
-            sample_2 = sample_2.mean(axis=1)
-         ##################################   
-        return torch.cdist(sample_1.unsqueeze(dim=0), sample_2.unsqueeze(dim=0), p=norm).squeeze(dim=0)
-
     def mergeTopK(self, yhats):
         yhats = np.vstack(yhats)
-
         final_yhat = [None for i in range(self.n_classes)]
         for i in range(self.n_classes):
             (values, counts) = np.unique(yhats[:, i], return_counts=True)
@@ -649,83 +616,73 @@ class Eval():
             final_yhat[i] = nn_class
             mask = yhats[:, i] == nn_class
             yhats = yhats[mask, :]
-
         return final_yhat
 
-
-
     def compute_err(self, confmat, n_bootstrap=10000):
-        
-        n_total = int(confmat.sum())  # total number of predictions
+        n_total = int(confmat.sum())
         n_wrong, n_correct = int(confmat[0, 0]), int(confmat[1, 1])
         preds = [0 for _ in range(n_wrong)] + [1 for _ in range(n_correct)]
         subset_accs = list()
         for _ in range(n_bootstrap):
             rnd_subset = random.choices(preds, k=n_total)
-            subset_accs.append(sum(rnd_subset)/(n_total))
+            subset_accs.append(sum(rnd_subset) / n_total)
         return np.std(np.array(subset_accs), axis=0, ddof=1)
 
     def evaluate(self, lookup, queries, n_nearest=1, update=True):
+        # Ensure queries are in the correct format
+        # queries = queries.float().numpy()
         
-        p_dist = self.pdist(lookup.float(), queries.float())
-        _, nn_idxs = torch.topk(p_dist, n_nearest, largest=False, dim=0)
-
+        # # Use Faiss to perform the nearest neighbor search
+        # print(queries.shape,"FFFFFFFFFFFFFFFF")
+        self.index = faiss.IndexFlatL2(lookup.shape[1])
+        self.index.add(lookup)
+        
+        distances, nn_idxs = self.index.search(queries, n_nearest)
+        
         confmats = self.init_confmats()
         
         n_test = len(self.testIdx2label)
-        for test_idx in range(n_test):  # for all test 
-            y_id = self.testIdx2label[test_idx]  # get id of test  
-            # get annotation of test (groundtruth)
+        for test_idx in range(n_test):
+            y_id = self.testIdx2label[test_idx]
             y = copy.deepcopy(self.id2label[y_id])
-            
-            
 
-            nn_idx = nn_idxs[:, test_idx]
-            yhats = list()
-
+            nn_idx = nn_idxs[test_idx]
+            yhats = []
             for nn_i in nn_idx:
-                # index of nearest neighbour (nn) in train set
-                nn_i = int(toCPU(nn_i))
-                # get id of nn (infer annotation)
-                # if nn_i in self.lookupIdx2label:
+                nn_i = int(nn_i)
                 yhat_id = self.lookupIdx2label[nn_i]
-                # get annotation of nn (groundtruth)
                 yhat = self.id2label[yhat_id]
                 yhat = np.asarray(yhat)
                 yhats.append(yhat)
                     
-                    
-
             if n_nearest == 1:
-                assert len(yhats) == 1, print(
-                    "More than one NN retrieved, though, n_nearest=1!")
+                assert len(yhats) == 1, print("More than one NN retrieved, though, n_nearest=1!")
                 yhat = yhats[0]
             else:
                 yhat = self.mergeTopK(yhats)
                 
-                
             confmats = self.add_sample(y, yhat, confmats)
-        # print(confmats,n_test)
-        if update:  # for constantly monitoring test performance
+
+        if update:
             for i in range(self.n_classes):
                 acc = confmats[i, 1, 1] / confmats[i].sum()
                 err = self.compute_err(confmats[i])
                 self.accs[i].append(acc)
                 self.errs[i].append(err)
             return self.accs, self.errs
-
-        else:  # to get baseline at the beginning
+        else:
             accs, errs = list(), list()
-            # get accuracy per difficulty level
             for i in range(self.n_classes):
                 acc = confmats[i, 1, 1] / confmats[i].sum()
                 err = self.compute_err(confmats[i])
                 accs.append(acc)
                 errs.append(err)
-                print("Samples for class {}: {}".format(
-                    i, sum(confmats[i, :, :])))
-            return accs, errs    
-        
+                print(f"Samples for class {i}: {sum(confmats[i, :, :])}")
+            return accs, errs        
+
+
+
+
 
 class Saver():
     def __init__(self, experiment_dir,num_classes):
@@ -949,7 +906,7 @@ def get_baseline(test,n_classes):
     return acc, err    
 
 
-def testing(mdl, test, batch_size=20):
+def testing(mdl, test, batch_size=30):
     model_device = next(mdl.parameters()).device
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -960,7 +917,6 @@ def testing(mdl, test, batch_size=20):
         lookup_emb = test.get_lookup_set()
         test_emb = test_emb.to(device)
         lookup_emb = lookup_emb.to(device)
-        
         # Process test set
         test_tucker_batches = []
         for i in range(0, len(test_emb), batch_size):
@@ -972,19 +928,20 @@ def testing(mdl, test, batch_size=20):
         # Process lookup set
         lookup_tucker_batches = []
         ################### 1000 =len(lookup_emb)
-        for i in range(0, 1000, batch_size):
+        for i in range(0, len(lookup_emb), batch_size):
             batch = lookup_emb[i:i + batch_size]
             lookup_tucker_batch = mdl.single_pass(batch)
             lookup_tucker_batches.append(lookup_tucker_batch)
         lookup_tucker = torch.cat(lookup_tucker_batches, dim=0)
 
-        acc, err = test.evaluate(lookup_tucker, test_tucker)
-        
-    # Move tensors back to CPU and remove from GPU memory
+
+        # Move tensors back to CPU and remove from GPU memory
     test_emb = test_emb.cpu()
     lookup_emb = lookup_emb.cpu()
     test_tucker = test_tucker.cpu()
     lookup_tucker = lookup_tucker.cpu()
+
+    acc, err = test.evaluate(lookup_tucker, test_tucker)
 
     # Delete tensors
     del test_emb
