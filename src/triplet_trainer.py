@@ -1,7 +1,6 @@
 """
 Author: Saleh Refahi
 Email: sr3622@drexel.edu
-Date: 2024-06-26
 """
 
 import numpy as np
@@ -21,7 +20,8 @@ import argparse
 from KmerTokenizer import KmerTokenizer
 from Bio import SeqIO
 from torch.cuda.amp import GradScaler, autocast
-from multiprocessing import Pool, Manager, cpu_count
+from joblib import Parallel, delayed
+
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -56,8 +56,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 
+
+
 def initialize_tokenizer():
-    # needs to adjust in future @l@
     global tokenizer
     tokenizer = KmerTokenizer(kmerlen=6, overlapping=True, maxlen=4096)
 
@@ -70,44 +71,39 @@ def process_record(record):
             return seq_id, embedding
         except Exception as e:
             print(f"Error processing record {seq_id}: {e}")
-            raise
+            return None
     return None
 
 def process_batch(records):
-    initialize_tokenizer()  # Ensure each process initializes the tokenizer
     local_dict = {}
     try:
-        for record in records:
-            tokenized_result = process_record(record)
+        results = [process_record(record) for record in records]
+        for tokenized_result in results:
             if tokenized_result:
                 seq_id, embedding = tokenized_result
                 local_dict[seq_id] = embedding
-
-        # print(f"Batch processed with size: {len(local_dict)}")  # Debugging
     except Exception as e:
         print(f"Error in process_batch: {e}")
     return local_dict
 
-def read_and_tokenize(file_path, id2embedding, batch_size=1000):
+def read_and_tokenize(file_path, id2embedding, batch_size=2000, n_jobs=8):
+    initialize_tokenizer()  
     # Read all records into a list
     records = list(SeqIO.parse(file_path, "fasta"))
     print(f"Total records read from {file_path}: {len(records)}")
-    
-    # Process in batches
-    with Pool(12) as pool:
-        results = []
-        for i in tqdm(range(0, len(records), batch_size)):
-            # print(f"Submitting batch {i//batch_size + 1}")  # Debugging
-            result = pool.apply_async(process_batch, args=(records[i:i + batch_size],))
-            results.append(result)
-        
-        # Ensure all processes complete and collect results
-        for result in results:
-            try:
-                local_dict = result.get()
-                id2embedding.update(local_dict)
-            except Exception as e:
-                print(f"Error getting result: {e}")
+
+    # Process in parallel using joblib
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(process_batch)(records[i:i + batch_size]) 
+        for i in tqdm(range(0, len(records), batch_size))
+    )
+
+    # Update the main dictionary with the results
+    for local_dict in results:
+        if local_dict:
+            id2embedding.update(local_dict)
+
+
 
 def trainer():
     args = parse_arguments()
@@ -132,6 +128,10 @@ def trainer():
     data_dir = Path(input_path)
     log_dir = Path(output_path) / 'trainer'
 
+    #reording the levels
+    order = [5,6,7,1,2,3,4]
+    reorder(data_dir,order)
+
     ids = pd.read_csv(os.path.join(data_dir, 'hierarchical-level.txt'), sep="\t", header=None)[0].tolist()
 
     if from_embedding:
@@ -143,8 +143,7 @@ def trainer():
         print("Tokenizing.....")
         
         # Initialize the shared dictionary
-        manager = Manager()
-        id2embedding = manager.dict()
+        id2embedding = dict()
         
         
         start_time = time.time()
@@ -156,9 +155,7 @@ def trainer():
         read_and_tokenize(data_dir / "train.fasta", id2embedding)
         train_time = time.time() - start_time
         print(f"Time to process training set: {train_time:.6f} seconds")
-        
-        # Convert manager.dict to a regular dictionary if needed
-        # id2embedding = dict(id2embedding)
+    
         print(f"Number of embeddings: {len(id2embedding)}")  
 
 

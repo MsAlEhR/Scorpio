@@ -481,19 +481,6 @@ class plotter():
 
         fig, axes = plt.subplots(1, 1)
         
-        
-#         def generate_distinct_colors(num_colors):
-#             hues = [i / num_colors for i in range(num_colors)]
-#             colors = []
-
-#             for hue in hues:
-#                 # Convert HSL to RGB
-#                 rgb_color = colorsys.hsv_to_rgb(hue, 0.8, 0.8)
-#                 colors.append(rgb_color)
-
-#             return colors
-
-#         colors = generate_distinct_colors(diff_classes)
 
         cmap = plt.get_cmap('viridis')  # You can choose a different colormap here
         norm = plt.Normalize(0, diff_classes)
@@ -854,7 +841,8 @@ class TripletLoss(object):
         return dist_ap, dist_an
 
     def pdist(self, v):
-        dist = torch.norm(v[:, None] - v, dim=2, p=2)
+        # Efficient pairwise distance calculation
+        dist = torch.cdist(v, v, p=2)
         return dist
 
     
@@ -907,7 +895,7 @@ def get_baseline(test,n_classes):
 
 
 def testing(mdl, test, batch_size=30):
-    model_device = next(mdl.parameters()).device
+    model_device = next(mdl.parameters()).device 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     mdl = mdl.to(device)

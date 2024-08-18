@@ -1,3 +1,8 @@
+"""
+Author: Saleh Refahi
+Email: sr3622@drexel.edu
+"""
+
 import numpy as np
 import torch
 import torch.utils.data
@@ -21,46 +26,44 @@ from collections import defaultdict, Counter
 from itertools import product
 from confidence_score import confidence_score
 import yaml
+from multiprocessing import Pool, Manager, cpu_count
+from joblib import Parallel, delayed
 
 
-
-
-def read_fasta(file_path):
+def read_fasta(file_path, buffer_size=4194304):
     x_header = []
     x_seq = []
     current_sequence = []
+    current_header = None
 
     try:
-        with open(file_path, "r") as f:
-            lines = f.readlines()
+        with open(file_path, "r", buffering=buffer_size) as f:
+            pattern = re.compile(r'seqid\|(\d+)')
+            indx = 0
 
-        current_header = None
-        indx = 0 
-        for xxx, line in enumerate(lines):
-            line = line.strip()
-            if line.startswith(">"):
-                indx = indx+1
-                # Save the previous sequence if it exists
-                if current_sequence:
-                    x_seq.append("".join(current_sequence))
-                    current_sequence = []
-                
-                # Regular expression pattern to extract the index string
-                pattern = r'seqid\|(\d+)'
-                current_header_match = re.search(pattern, line)
-                if current_header_match is not None:
-                    index_string = current_header_match.group(1)  # Extract the matched string
-                    current_header = int(index_string)
-                    x_header.append(current_header)  # Convert to integer and append to x_header
+            for line in f:
+                line = line.strip()
+                if line.startswith(">"):
+                    indx += 1
+                    # Save the previous sequence if it exists
+                    if current_sequence:
+                        x_seq.append("".join(current_sequence))
+                        current_sequence = []
+
+                    # Extract the index string using the compiled regex pattern
+                    current_header_match = pattern.search(line)
+                    if current_header_match is not None:
+                        index_string = current_header_match.group(1)
+                        current_header = int(index_string)
+                    else:
+                        current_header = indx
+                    x_header.append(current_header)
                 else:
-                    current_header = indx
-                    x_header.append(indx)
-            else:
-                current_sequence.append(line)
-        
-        # Add the last sequence after exiting the loop
-        if current_sequence:
-            x_seq.append("".join(current_sequence))
+                    current_sequence.append(line)
+
+            # Add the last sequence after exiting the loop
+            if current_sequence:
+                x_seq.append("".join(current_sequence))
                 
     except FileNotFoundError:
         print(f"File not found: {file_path}")
@@ -113,33 +116,19 @@ def read_fastq(file_path):
 
 
 
-def kmer_tokenize(seq_list, kmerlen=6, overlapping=True, maxlen=81):
-    
-    VOCAB = [''.join(i) for i in itertools.product(*(['ATCG'] * int(kmerlen)))]
-    VOCAB_SIZE = len(VOCAB) + 5  
+def initialize_tokenizer():
+    # needs to adjust in future @l@
+    global tokenizer
+    tokenizer = KmerTokenizer(kmerlen=6, overlapping=True, maxlen=4096)
 
-    tokendict = dict(zip(VOCAB, range(5,VOCAB_SIZE)))
-    tokendict['[UNK]'] = 0
-    tokendict['[SEP]'] = 1
-    tokendict['[CLS]'] = 3
-    tokendict['[MASK]'] = 4
-    
-    tokendict['[PAD]'] = 4
+def tokenize_sequence(sequence, tokenizer):
+    return tokenizer.kmer_tokenize([sequence])
 
-    seq_ind_list = []
-    for seq in tqdm(seq_list):
-        if overlapping:
-            stoprange = len(seq) - (kmerlen - 1)  
-            tokenlist = [tokendict[seq[k:k + kmerlen]] for k in range(0, stoprange) if set(seq[k:k + kmerlen]).issubset('ATCG')]
-        else:
-            stoprange = len(seq) - (kmerlen - 1)
-            tokenlist = [tokendict[seq[k:k + kmerlen]] for k in range(0, stoprange, kmerlen) if set(seq[k:k + kmerlen]).issubset('ATCG')]
-        # Padding if necessary
-        if len(tokenlist) < maxlen:
-            tokenlist.extend([tokendict['[PAD]']] * (maxlen - len(tokenlist)))
-        seq_ind_list.append(tokenlist[:maxlen])
-    return seq_ind_list
-    
+def kmer_tokenize(seqlist, tokenizer, n_jobs=12):
+    tokenized_sequences = Parallel(n_jobs=n_jobs)(
+        delayed(tokenize_sequence)(sequence, tokenizer) for sequence in tqdm(seqlist)
+    )
+    return tokenized_sequences
 
 
 
@@ -153,39 +142,48 @@ def read_fasta_or_fastq(file_path):
     else:
         raise ValueError("Unrecognized file extension. Please provide a FASTA or FASTQ file.")
 
-def calculate_kmer_frequencies(sequences,k=6):
 
-    possible_kmers = [''.join(p) for p in product('ATCG', repeat=k)]  # All possible 6-mers
 
-    # Initialize an array to store the frequencies
-    frequencies = np.zeros((len(sequences), len(possible_kmers)))
+def calculate_single_sequence_kmer_frequencies(sequence, possible_kmers, k, sequence_len, index):
+    sequence = sequence.upper()
+    sequence_kmer_counts = Counter(sequence[j:j+k] for j in range(sequence_len - k + 1))
+    frequencies = np.array([sequence_kmer_counts.get(kmer, 0) / sequence_len for kmer in possible_kmers], dtype=np.float16)
+    return index, frequencies
 
-    # Calculate k-mer frequencies for each sequence
-    for i, sequence in tqdm(enumerate(sequences)):
-        sequence_kmer_counts = Counter([sequence[j:j+k] for j in range(len(sequence) - k + 1)])
-        for j, kmer in enumerate(possible_kmers):
-            frequencies[i, j] = sequence_kmer_counts[kmer]  / (4 ** k)
+def calculate_kmer_frequencies(sequences, k=6, n_jobs=16):
+    possible_kmers = [''.join(p) for p in product('ATCG', repeat=k)]  
+
+    # Parallel processing with index tracking
+    frequencies_with_indices = Parallel(n_jobs=n_jobs)(
+        delayed(calculate_single_sequence_kmer_frequencies)(
+            sequence, possible_kmers, k, len(sequence), idx
+        ) for idx, sequence in enumerate(tqdm(sequences))
+    )
+
+    # Sort by the original indices to maintain the order
+    frequencies_with_indices.sort(key=lambda x: x[0])
+
+    # Extract the k-mer frequencies, ignoring the indices
+    frequencies = np.array([freq for idx, freq in frequencies_with_indices], dtype=np.float16)
 
     return frequencies
 
 
 
 def load_data(max_len,db_fasta,test_fasta,cal_kmer_freq):
-
     print("Loading data ....")
-
-
+    start = time.time()
     data_test, test_indices = read_fasta_or_fastq(test_fasta)
     data_train, train_indices = read_fasta_or_fastq(db_fasta)
-
+    end = time.time()
+    print("Loading data time:", end - start)
+    print("Establishing initial encodings ....")
     if cal_kmer_freq :
         data_train=calculate_kmer_frequencies(data_train)
         data_test=calculate_kmer_frequencies(data_test)
     else:
         data_train=kmer_tokenize(data_train,maxlen=max_len) 
         data_test=kmer_tokenize(data_test,maxlen=max_len)
-
-
 
     return data_train,data_test,train_indices,test_indices
 
@@ -206,10 +204,6 @@ def load_model(weights_p,from_embedding,embedding_size):
 
 
 
-
-
-
-
 def compute_embeddings(model, raw_embedding_test, raw_embedding_train,output,batch_size):
     print("Generating embeddings ....")
     
@@ -219,7 +213,6 @@ def compute_embeddings(model, raw_embedding_test, raw_embedding_train,output,bat
     if isinstance(model, torch.nn.DataParallel):
         model = model.module
     
-
     model=model.to(device)
     model.eval()
     with torch.no_grad(): 
@@ -239,10 +232,10 @@ def compute_embeddings(model, raw_embedding_test, raw_embedding_train,output,bat
             batch = model.single_pass(batch)
             triplet_embedding_train.append(batch)
         triplet_embedding_train = torch.cat(triplet_embedding_train, dim=0).squeeze().to("cpu").detach().numpy()
-        np.save(f"{output}/db_embeddings.npy", triplet_embedding_train)
-
-    
+        np.save(f"{output}/db_embeddings.npy", triplet_embedding_train)    
     return triplet_embedding_test, triplet_embedding_train
+
+
 
 def create_index(embedding,ouput):
     print("Creating index ....")
@@ -259,10 +252,6 @@ def create_index(embedding,ouput):
 def save_args_to_yaml(args, yaml_file):
     with open(yaml_file, 'w') as file:
         yaml.dump(vars(args), file, default_flow_style=False)
-
-
-
-
 
 
 def str2bool(v):
@@ -292,7 +281,7 @@ def extract_and_sort_headers(metadata_file):
 
     # Calculate number of hits based on the maximum unique value count
     # Ensuring an equal number of positive and negative values for Faiss search
-    number_hit = max_unique_value_count * 2
+    number_hit = max_unique_value_count * 2 if max_unique_value_count !=0 else 1 
 
     return sorted_headers, number_hit,df
 
@@ -319,7 +308,6 @@ def main(batch_size, max_len, output, scorpio_model, db_fasta, db_embedding, cal
 
     np.save(os.path.join(output, 'train_indices.npy'), train_indices)
 
-    
     if db_embedding :
         raw_embedding_train= np.load(db_embedding)
         raw_embedding_test= np.load(val_embedding)
@@ -340,7 +328,9 @@ def main(batch_size, max_len, output, scorpio_model, db_fasta, db_embedding, cal
     
     
     index=create_index(triplet_embedding_train,output)
-
+    
+    if torch.cuda.device_count() > 1:
+        index = faiss.index_cpu_to_all_gpus(index)
     
     print("Indexing Done.")
     

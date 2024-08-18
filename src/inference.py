@@ -1,3 +1,8 @@
+"""
+Author: Saleh Refahi
+Email: sr3622@drexel.edu
+"""
+
 import numpy as np
 import torch
 import torch.utils.data
@@ -19,6 +24,7 @@ from collections import defaultdict, Counter
 from itertools import product
 from confidence_score import confidence_score,ConfNN
 import yaml
+from joblib import Parallel, delayed
 
 from createdb import (
     read_fasta,
@@ -41,8 +47,6 @@ def load_args_from_yaml(yaml_file):
         with open(yaml_file, 'r') as file:
             return yaml.safe_load(file)
     return {}
-
-
 
 
 
@@ -91,7 +95,6 @@ def load_models_from_folder(folder_path, model_class):
     # Regular expression to match files starting with 'confidence' and ending with '.pth'
     pattern = re.compile(r'^confidence_.*\.pth$')
 
-    
     # Iterate over all files in the directory
     for filename in os.listdir(folder_path):
         match = pattern.match(filename)
@@ -112,15 +115,15 @@ def load_models_from_folder(folder_path, model_class):
     return model_dict
 
 
-# Function to make predictions with a trained model and evaluate R^2
 def test_distance_confidence(model, new_X):
-    # Convert the new data to PyTorch tensors
-    new_X_tensor = torch.tensor(new_X, dtype=torch.float32).reshape(-1, 1)
-    # Predict using the trained model
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    
+    new_X_tensor = torch.tensor(new_X, dtype=torch.float32).reshape(-1, 1).to(device)
+    
     with torch.no_grad():
-        new_y_pred = model(new_X_tensor).numpy()
-
-
+        new_y_pred = model(new_X_tensor).cpu().numpy()  # Move the result back to CPU for numpy conversion
+    
     return new_y_pred
 
 
@@ -131,8 +134,7 @@ def check_match(index, level, metadata):
     return metadata.loc[index, level]
 
 
-
-# Define a function to calculate class probabilities for each level in levels , similar function in confidence_score.py with name cal_prob
+# Define a function to calculate class probabilities for each level in levels , similar function in confidence_score.py with name  
 def calculate_confidence(x, levels):
     probabilities = {}
 
@@ -140,7 +142,6 @@ def calculate_confidence(x, levels):
         
         # Get all unique classes in the target column for this level
         unique_classes = np.unique(x[level + '_target'])
-
         
         # Create a dictionary to store probabilities for each class
         class_probabilities = {}
@@ -152,7 +153,6 @@ def calculate_confidence(x, levels):
             matches = (x[level + '_target'] == cls)
             probability = matches.sum() / total_in_class
             probability_dist = np.max(x[x[level + '_target'] == cls][f'{level}_dist'])
-            # class_probabilities[f'probability_class_{cls}'] = ( probability*probability_dist)
             if probability_dist >  probability :
                 class_probabilities[f'probability_class_{cls}'] = (probability* probability_dist)
             else:
@@ -170,7 +170,8 @@ def calculate_confidence(x, levels):
 
 
 
-
+def parallel_group_apply(group,hierarchy):
+    return calculate_confidence(group, levels=hierarchy)
 
 
 def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_embedding,  cal_kmer_freq, number_hit,metadata):
@@ -180,6 +181,10 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
 
     # Loading Index
     index = faiss.read_index(os.path.join(db_path, 'faiss_index'))
+    
+    if torch.cuda.device_count() > 1:
+        index = faiss.index_cpu_to_all_gpus(index)
+        
     print("Index File Loaded")
     
     os.makedirs(output, exist_ok=True)
@@ -215,7 +220,7 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
     
     
     for level,model in tqdm(model_dict.items()):
-        result_df[f"{level}_dist"]=test_distance_confidence(model, result_df[2])
+        result_df[f"{level}_dist"]=test_distance_confidence(model, result_df[2].values)
 
     
     result_df.to_csv(f"{output}/Output.tsv",sep="\t",index=False)
@@ -224,20 +229,34 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
     hierarchy,_,metadata = extract_and_sort_headers(metadata)
 
 
-
-    for level in tqdm(hierarchy):
-        # result_df[level + '_query'] = result_df.apply(lambda row: check_match(row[0], level, metadata), axis=1)
-        result_df[level + '_target'] = result_df.apply(lambda row: check_match(row[1], level, metadata), axis=1)
     
+    # Prepare a dictionary to store results temporarily
+    target_results = {level: [] for level in hierarchy}
+    
+    # Iterate over the rows once and store the results
+    for _, row in tqdm(result_df.iterrows()):
+        for level in hierarchy:
+            target_results[level].append(check_match(row[1], level, metadata))
+    
+    # Assign the stored results to the DataFrame
+    for level in hierarchy:
+        result_df[level + '_target'] = target_results[level]
+
+
     
     result_df.dropna(subset=[level + '_target' for level in hierarchy], inplace=True)
 
+
+    print("Generating Prediction....")
     # Group by the first column (group_key)
     grouped = result_df.groupby(0)
     
-    probabilities = grouped.apply(calculate_confidence, levels=hierarchy).reset_index()
+    # probabilities = grouped.apply(calculate_confidence, levels=hierarchy).reset_index()
     
+    results = Parallel(n_jobs=16)(delayed(parallel_group_apply)(group,hierarchy) for name, group in tqdm(grouped))
 
+    # Combine the results into a single DataFrame
+    probabilities = pd.DataFrame(results)
 
     probabilities.to_csv(f"{output}/Prediction.tsv",sep="\t",index=False)
 

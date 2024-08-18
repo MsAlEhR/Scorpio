@@ -1,3 +1,9 @@
+"""
+Author: Saleh Refahi
+Email: sr3622@drexel.edu
+"""
+
+
 import os
 import numpy as np
 import pandas as pd
@@ -55,27 +61,42 @@ def train_pytorch_model(X, y, num_epochs=130, learning_rate=0.01):
     r2 = r2_score(y, y_pred)
     return model, r2, y_pred
 
+
+def fast_micro_f1(y_true, y_pred):
+    # Calculate TP, FP, FN using vectorized operations
+    tp = np.sum(y_true == y_pred)
+    fp_fn = np.sum(y_true != y_pred)
+    
+    # Compute precision and recall
+    precision = tp / (tp + fp_fn)
+    recall = tp / (tp + fp_fn)
+    
+    # Calculate micro F1 score
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
+
+
 # Function to calculate F1 score
-def calculate_f1_score(distance_value, level, df_mms):
-    filtered_df = df_mms[df_mms[2] <= distance_value]
-    score = f1_score(filtered_df[f'{level}_query'], filtered_df[f'{level}_target'], average='micro')
-    return score , len(filtered_df)
+def calculate_f1_score(distance_value, df, query_col, target_col):
+    mask = df[2].values <= distance_value
+    score = fast_micro_f1(query_col[mask], target_col[mask])
+    return score, np.sum(mask)
+
 
 def train_distance_confidence(df,hierarchy,level,num_distance=4000) :
 
-    
+    print(f"Training Confidence Score for {level}")
     # Find the index of the given level
     level_index = hierarchy.index(level)
 
-    filtered_df = df
     
     # Filter rows where all upper levels are correct
     for i in range(level_index):
         upper_level = hierarchy[i]
-        filtered_df = filtered_df[filtered_df[f'{upper_level}_query'] == filtered_df[f'{upper_level}_target']]
+        df = df[df[f'{upper_level}_query'] ==df[f'{upper_level}_target']]
     
 
-    df = filtered_df
     # df_mms = df_mms.groupby(0).nth(5)
     # Calculate the minimum and maximum values of df_mms[2]
     min_distance = df[2].min()
@@ -88,11 +109,15 @@ def train_distance_confidence(df,hierarchy,level,num_distance=4000) :
     num_filtered_values = []
     
     # Number of CPU cores for parallel processing
-    num_cores = 12
+    num_cores = 14
     
-    # Parallel execution of the loop
+    query_col = df[f'{level}_query'].values
+    target_col = df[f'{level}_target'].values
+    
+    
+    # Parallel execution
     values = Parallel(n_jobs=num_cores)(
-        delayed(calculate_f1_score)(distance_value, level, df)
+        delayed(calculate_f1_score)(distance_value, df, query_col, target_col)
         for distance_value in tqdm(distance_values)
     )
     metrics_values, num_filtered_values = zip(*values)
@@ -104,7 +129,7 @@ def train_distance_confidence(df,hierarchy,level,num_distance=4000) :
     model, r2, y_pred = train_pytorch_model(X, y)
 
 
-    df[f"{level}_dist"]=test_distance_confidence(model, df[2])
+    df.loc[:, f"{level}_dist"] = test_distance_confidence(model, df[2].values)
 
     # Group by the first column (group_key)
     grouped = df.groupby(0)
@@ -136,9 +161,14 @@ def train_distance_confidence(df,hierarchy,level,num_distance=4000) :
 
 # Function to make predictions with a trained model and evaluate R^2
 def test_distance_confidence(model, new_X):
-    new_X_tensor = torch.tensor(new_X, dtype=torch.float32).reshape(-1, 1)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    
+    new_X_tensor = torch.tensor(new_X, dtype=torch.float32).reshape(-1, 1).to(device)
+    
     with torch.no_grad():
-        new_y_pred = model(new_X_tensor).numpy()
+        new_y_pred = model(new_X_tensor).cpu().numpy()  # Move the result back to CPU for numpy conversion
+    
     return new_y_pred
 
 
@@ -179,17 +209,30 @@ def cal_prob(x, level):
 # Main execution function
 def confidence_score(metadata, levels_to_check,hierarchy, df_mms,output, num_distance=4000):
     
-    # df_mms = pd.read_csv(filename, sep="\t", header=None)
-
+    print("Performing Confidence Score function...")
+    
     def check_match(index, level, metadata):
-        if str(metadata.loc[index, level]).isspace():
+        value = str(metadata.loc[index, level])
+        if value.isspace():
             return None
-        return metadata.loc[index, level]
-
+        return value
+    
+    # Prepare a dictionary to store results temporarily
+    query_results = {level: [] for level in levels_to_check}
+    target_results = {level: [] for level in levels_to_check}
+    
+    # Iterate over the rows once and store the results
+    for _, row in tqdm(df_mms.iterrows()):
+        for level in levels_to_check:
+            query_results[level].append(check_match(row[0], level, metadata))
+            target_results[level].append(check_match(row[1], level, metadata))
+    
+    # Assign the stored results to the DataFrame
     for level in levels_to_check:
-        df_mms[level + '_query'] = df_mms.apply(lambda row: check_match(row[0], level, metadata), axis=1)
-        df_mms[level + '_target'] = df_mms.apply(lambda row: check_match(row[1], level, metadata), axis=1)
-
+        df_mms[level + '_query'] = query_results[level]
+        df_mms[level + '_target'] = target_results[level]
+    
+    # Drop rows with NaN values
     df_mms.dropna(subset=[level + '_query' for level in levels_to_check] + [level + '_target' for level in levels_to_check], inplace=True)
 
 
@@ -202,13 +245,6 @@ def confidence_score(metadata, levels_to_check,hierarchy, df_mms,output, num_dis
             yaml.dump({f'threshold_{levels_to_check[i]}': float(threshold)}, f, default_flow_style=False)
 
 
-
-
-
-
-
-
-    # for i, model in enumerate(model_list):
 
 # # Example usage
 # if __name__ == "__main__":
