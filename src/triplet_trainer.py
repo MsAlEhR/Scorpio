@@ -129,8 +129,8 @@ def trainer():
     log_dir = Path(output_path) / 'trainer'
 
     #reording the levels
-    order = [5,6,7,1,2,3,4]
-    reorder(data_dir,order)
+    # order = [6,7,1,2,3,4,5]
+    # reorder(data_dir,order)
 
     ids = pd.read_csv(os.path.join(data_dir, 'hierarchical-level.txt'), sep="\t", header=None)[0].tolist()
 
