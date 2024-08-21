@@ -17,7 +17,7 @@ The [GitHub Wiki](https://github.com/MsAlEhR/Scorpio/wiki) also contains tutoria
 
 ## Training Data
 
-For training the gene-taxa model with full genes, we have included the data in this Zenodo record: [Zenodo](https://zenodo.org/record/12175913). Please follow the instructions below to fully download the data. This data can be used with the `triplet_trainer` to train and save the model:
+For training the gene-taxa model with full genes, we have included the data in this Zenodo record: [Zenodo](https://zenodo.org/records/12964684). Please follow the instructions below to fully download the data. This data can be used with the `triplet_trainer` to train and save the model:
 
 ```bash
 wget https://zenodo.org/api/records/12175913/files-archive -O scorpio-gene-taxa.zip
