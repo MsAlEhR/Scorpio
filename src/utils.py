@@ -34,18 +34,15 @@ from concurrent.futures import ThreadPoolExecutor
 plt.switch_backend('agg')  # GPU is only available via SSH (no display)
 plt.clf()  # clear previous figures if already existing
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class CustomDataset(torch.utils.data.Dataset):
 
     def __init__(self, train, datasplitter, n_classes, balanced_sampling=False):
         self.balanced_sampling = balanced_sampling
-        self.seq_id, self.embd = zip(
-            *[(seq_id, embd) for seq_id, embd in train.items()])
+        self.seq_id=train
 
-        self.id2label, self.label2id = datasplitter.parse_label_mapping(
-            set(train.keys()))
+        self.id2label, self.label2id = datasplitter.id2label,datasplitter.label2id
 
         # if classes should be sampled evenly (not all training samples are used in every epoch)
         if self.balanced_sampling:
@@ -53,7 +50,7 @@ class CustomDataset(torch.utils.data.Dataset):
         else:  # if you want to iterate over all training samples
             self.data_len = len(self.seq_id)
 
-        self.id2embedding = train
+        self.id2embedding = datasplitter.id2embedding
         self.n_classes = n_classes  # number of class levels
         
         self.neg_sim = 1 
@@ -65,7 +62,7 @@ class CustomDataset(torch.utils.data.Dataset):
         if self.balanced_sampling:  # get a dataset class, instead of a trainings sample
            pass
         else:  # get a training sample (over-samples large dataset families according to occurance)
-            anchor = self.embd[index] # get embedding of anchor
+            anchor = self.id2embedding[index] # get embedding of anchor
             anchor_id = self.seq_id[index] # get dataset ID of anchor
             anchor_label = self.id2label[anchor_id] # get dataset label of anchor
         pos, neg, pos_label, neg_label, pos_sim = self.get_pair(
@@ -110,6 +107,7 @@ class CustomDataset(torch.utils.data.Dataset):
                 return None
         return rnd_label
 ################################################################################
+    
     def get_rnd_candidates(self, anchor_label, similarity_level,n_classes,is_pos):
         
         anchor_label2 = copy.deepcopy(anchor_label)
@@ -240,10 +238,7 @@ class CustomDataset(torch.utils.data.Dataset):
         self.get_pair(example_id, example_label, verbose=True)
         return None
     
-    
-    
-    
-    
+  
 class DataSplitter():
     def __init__(self,data_dir, id2embedding,n_classes=4, verbose=True,num_workers=12):
         self.verbose = verbose
@@ -252,34 +247,21 @@ class DataSplitter():
         self.cath_label_path = self.data_dir / 'hierarchical-level.txt'
         self.id2embedding = id2embedding
         self.num_workers = num_workers
-
-        if verbose:
-            print('Loaded embeddings : {}'.format(
-                len(self.id2embedding)))
-
-        self.id2label, self.label2id = self.parse_label_mapping(
-                set(self.id2embedding.keys()))
+        self.id2label, self.label2id = self.parse_label_mapping()
 
     def get_id2embedding(self):
         return self.id2embedding
 
-    def parse_label_mapping(self, id_subset):
+    def parse_label_mapping(self):
         id2label = dict()
         label2id = dict()
         with open(self.cath_label_path, 'r') as f:
             for n_domains, line in enumerate(f):
-
                 # skip header lines
                 if line.startswith("#"):
                     continue
-
                 data = line.split()
-                identifier = data[0]
-                # skip 
-                if identifier not in id_subset:
-                    continue
-
-
+                identifier = int(data[0])
 
                 def insert_into_dict(dct, keys, value):
                     current_dict = dct
@@ -298,24 +280,15 @@ class DataSplitter():
         if self.verbose:
             print('Finished parsing n_domains: {}'.format(n_domains))
             print("Total length of id2label: {}".format(len(id2label)))
+            
         return id2label, label2id
 
 
     def get_embeddings(self, fasta_path):
         ids = self.read_ids(fasta_path)
-    
-        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            embeddings = dict(executor.map(self.get_embedding_for_id, ids))
-    
-        return {k: v for k, v in embeddings.items() if v is not None}
+        return ids
 
-    def get_embedding_for_id(self, _id):
-        try:
-            embd = self.id2embedding[_id]
-            return _id, torch.tensor(embd)
-        except KeyError:
-            print('No embedding found for: {}'.format(_id))
-            return _id, None
+
     
     def read_ids(self, path):
         with open(path, 'r') as f:
@@ -328,10 +301,8 @@ class DataSplitter():
     
     def extract_id(self, record):
         if '|' in record.id:
-            return record.id.split('|')[1]
+            return int(record.id.split('|')[1])
         return None
-
-    
 
     def get_predef_splits(self, p_train=None, p_test=None):
 
@@ -339,19 +310,18 @@ class DataSplitter():
             p_train = self.data_dir / "train.fasta"
             p_val = self.data_dir / "val.fasta"
             
-        train = self.get_embeddings(p_train)        
+        train = self.get_embeddings(p_train)   
         val = self.get_embeddings(p_val)
         
         
-        train_keys = list(train.keys())
 
         # Determine the number of samples for the validation lookup table
-        num_samples = int(len(train_keys) * 0.2)
+        num_samples = int(len(train) * 0.1)
 
         # Randomly sample the training keys for the validation lookup table
-        sampled_keys = random.sample(train_keys, num_samples)
+        val_lookup = random.sample(train, num_samples)
         
-        val_lookup = {key: train[key] for key in sampled_keys}
+        # val_lookup = {key: train[key] for key in sampled_keys}
                 
         # valLookup20 = train
         
@@ -373,8 +343,7 @@ class MyCollator(object):
         sim = list()
 
         for (anchor, pos, neg, anchor_label, pos_label, neg_label, pos_sim) in batch:
-            
-            
+
             x = torch.cat([anchor, pos, neg], dim=0)
             ################################ I changed these lines for cnn
             emb_shape= anchor.shape[-1]
@@ -539,10 +508,7 @@ class Eval():
         self.testIdx2label = self.preproc(test)
         self.test = torch.tensor(np.array(list(test.values()))).squeeze(dim=1)
         self.lookup = torch.tensor(np.array(list(lookup.values()))).squeeze(dim=1)
-        self.id2label, self.label2id = datasplitter.parse_label_mapping(
-            # use only keys from the given lookup set
-            set(lookup.keys()) | set(test.keys()),
-        )
+        self.id2label, self.label2id = datasplitter.id2label, datasplitter.label2id
         self.name = name
         self.n_classes = n_classes
         self.accs = self.init_log()
@@ -616,11 +582,6 @@ class Eval():
         return np.std(np.array(subset_accs), axis=0, ddof=1)
 
     def evaluate(self, lookup, queries, n_nearest=1, update=True):
-        # Ensure queries are in the correct format
-        # queries = queries.float().numpy()
-        
-        # # Use Faiss to perform the nearest neighbor search
-        # print(queries.shape,"FFFFFFFFFFFFFFFF")
         self.index = faiss.IndexFlatL2(lookup.shape[1])
         self.index.add(lookup)
         
@@ -863,7 +824,11 @@ def init_monitor():
 
 # move torch/GPU tensor to numpy/CPU
 def toCPU(data):
-    return data.cpu().detach().numpy()
+    if isinstance(data, torch.Tensor):
+        return data.cpu().detach().numpy()
+    else:
+        print(f"Unexpected data type: {type(data)}")
+        return data  # Or handle this case accordingly
 
 
 # count number of free parameters in the network
@@ -871,16 +836,16 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-# Create dataloaders with custom collate function
-def dataloader(customdata, batch_size):
-    my_collator = MyCollator()
-    return torch.utils.data.DataLoader(dataset=customdata,
-                                       batch_size=batch_size,
-                                       shuffle=True,
-                                       drop_last=True,
-                                       collate_fn=my_collator,
-                                       num_workers=0
-                                       )
+# # Create dataloaders with custom collate function
+# def dataloader(customdata, batch_size):
+#     my_collator = MyCollator()
+#     return torch.utils.data.DataLoader(dataset=customdata,
+#                                        batch_size=batch_size,
+#                                        shuffle=True,
+#                                        drop_last=True,
+#                                        collate_fn=my_collator,
+#                                        num_workers=0
+#                                        )
 
 
 
@@ -894,31 +859,26 @@ def get_baseline(test,n_classes):
     return acc, err    
 
 
-def testing(mdl, test, batch_size=30):
-    model_device = next(mdl.parameters()).device 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
+def testing(mdl, test, batch_size=40):
     mdl = mdl.to(device)
     mdl.eval()
     with torch.no_grad():
         test_emb = test.get_test_set()
         lookup_emb = test.get_lookup_set()
-        test_emb = test_emb.to(device)
-        lookup_emb = lookup_emb.to(device)
         # Process test set
         test_tucker_batches = []
         for i in range(0, len(test_emb), batch_size):
             batch = test_emb[i:i + batch_size]
-            test_tucker_batch = mdl.single_pass(batch)
+            test_tucker_batch = mdl.single_pass(batch.to(device))
             test_tucker_batches.append(test_tucker_batch)
         test_tucker = torch.cat(test_tucker_batches, dim=0)
         
         # Process lookup set
         lookup_tucker_batches = []
         ################### 1000 =len(lookup_emb)
-        for i in range(0, len(lookup_emb), batch_size):
+        for i in tqdm(range(0, len(lookup_emb), batch_size)):
             batch = lookup_emb[i:i + batch_size]
-            lookup_tucker_batch = mdl.single_pass(batch)
+            lookup_tucker_batch = mdl.single_pass(batch.to(device))
             lookup_tucker_batches.append(lookup_tucker_batch)
         lookup_tucker = torch.cat(lookup_tucker_batches, dim=0)
 
@@ -937,6 +897,7 @@ def testing(mdl, test, batch_size=30):
     del test_tucker
     del lookup_tucker
 
+    torch.cuda.empty_cache()
     
     mdl.train()
     return acc, err

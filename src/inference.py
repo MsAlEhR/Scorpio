@@ -33,7 +33,7 @@ from createdb import (
     read_fasta_or_fastq,
     calculate_kmer_frequencies,
     load_model,
-    compute_embeddings,
+    # compute_embeddings,
     create_index,
     str2bool,
     extract_and_sort_headers,
@@ -59,34 +59,99 @@ def load_data(max_len,test_fasta,cal_kmer_freq):
     if cal_kmer_freq :
         data_test=calculate_kmer_frequencies(data_test)
     else:
-        data_test=kmer_tokenize(data_test,maxlen=max_len)
+        data_test=kmer_tokenize(data_test)
 
     return data_test,test_indices
 
 
 
+# def compute_embeddings(model, raw_embedding_test,output,batch_size):
+#     print("Generating embeddings ....")
+#     # Process test set
+#     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+#     if isinstance(model, torch.nn.DataParallel):
+#         model = model.module
+    
+    
+#     model=model.to(device)
+#     model.eval()
+#     with torch.no_grad(): 
+#         triplet_embedding_test = []
+#         for i in tqdm(range(0, len(raw_embedding_test), batch_size)):
+#             batch = raw_embedding_test[i:i + batch_size].to(device)
+#             batch = model.single_pass(batch)
+#             triplet_embedding_test.append(batch)
+#         triplet_embedding_test = torch.cat(triplet_embedding_test, dim=0).squeeze().to("cpu").detach().numpy()
+#         np.save(f"{output}/test_embeddings.npy", triplet_embedding_test)
+
+    
+#     return triplet_embedding_test
+
+
+
+
+
+
+
+
+
+
+
+import pytorch_lightning as pl
+from torch.utils.data import DataLoader, TensorDataset
+import torch
+import numpy as np
+
+class EmbeddingModel(pl.LightningModule):
+    def __init__(self, model):
+        super(EmbeddingModel, self).__init__()
+        self.model = model
+
+    def forward(self, batch):
+        return self.model.single_pass(batch)
+
 def compute_embeddings(model, raw_embedding_test,output,batch_size):
-    print("Generating embeddings ....")
-    # Process test set
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print("Generating embeddings ...")
+    
+    # Wrap your model in a LightningModule
+    embedding_model = EmbeddingModel(model)
 
-    if isinstance(model, torch.nn.DataParallel):
-        model = model.module
-    
-    
-    model=model.to(device)
-    model.eval()
-    with torch.no_grad(): 
-        triplet_embedding_test = []
-        for i in tqdm(range(0, len(raw_embedding_test), batch_size)):
-            batch = raw_embedding_test[i:i + batch_size].to(device)
-            batch = model.single_pass(batch)
-            triplet_embedding_test.append(batch)
-        triplet_embedding_test = torch.cat(triplet_embedding_test, dim=0).squeeze().to("cpu").detach().numpy()
-        np.save(f"{output}/test_embeddings.npy", triplet_embedding_test)
+    # PyTorch Lightning Trainer for multi-GPU inference
+    trainer = pl.Trainer(
+        accelerator='gpu',        # Use GPU(s)
+        devices=torch.cuda.device_count(),  # Automatically use all available GPUs
+        precision=16,             # Use mixed precision for faster inference
+        strategy="dp",           # Use Distributed Data Parallel strategy for efficient multi-GPU usage
+        inference_mode=True       # Enable inference mode for optimizations
+    )
 
+    def process_dataset(dataset, save_path):
+        # Create DataLoader for the entire dataset
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=12, pin_memory=True)
     
+        # Use the trainer to predict on the entire dataset
+        predictions = trainer.predict(embedding_model, dataloaders=dataloader)
+        
+        # Concatenate all predictions into one tensor
+        embeddings = torch.cat(predictions, dim=0).cpu().detach().numpy()
+        
+        # Save the embeddings to a file
+        np.save(save_path, embeddings)
+        print(f"Saved embeddings to {save_path}. Shape: {embeddings.shape}")
+        return embeddings
+
+
+    # Process test and train datasets
+    triplet_embedding_test = process_dataset(raw_embedding_test, f"{output}/val_embeddings.npy")
+
     return triplet_embedding_test
+
+
+
+
+
+
 
 
 
@@ -134,37 +199,49 @@ def check_match(index, level, metadata):
     return metadata.loc[index, level]
 
 
-# Define a function to calculate class probabilities for each level in levels , similar function in confidence_score.py with name  
+
 def calculate_confidence(x, levels):
     probabilities = {}
-
-    for i,level in enumerate(levels):
-        
+    
+    for i, level in enumerate(levels):
+        if i > 0:  # For levels beyond the first (e.g., Phylum, Class, etc.)
+            previous_level = levels[i-1]
+            previous_class = probabilities[f"{previous_level}_predicted"]
+            
+            # Filter rows based on the previous level's selected class
+            x_filtered = x[x[previous_level + '_target'] == previous_class]
+        else:
+            # No filtering for the first level (e.g., Kingdom)
+            x_filtered = x
+            
         # Get all unique classes in the target column for this level
-        unique_classes = np.unique(x[level + '_target'])
+        unique_classes = np.unique(x_filtered[level + '_target'])
         
         # Create a dictionary to store probabilities for each class
         class_probabilities = {}
-
-        total_in_class = len(x)
+        total_in_class = len(x_filtered)
         
-        # Calculate the probability for each class
         for cls in unique_classes:
-            matches = (x[level + '_target'] == cls)
+            matches = (x_filtered[level + '_target'] == cls)
             probability = matches.sum() / total_in_class
-            probability_dist = np.max(x[x[level + '_target'] == cls][f'{level}_dist'])
-            if probability_dist >  probability :
-                class_probabilities[f'probability_class_{cls}'] = (probability* probability_dist)
+            probability_dist = np.max(x_filtered[matches][f'{level}_dist'])
+            
+            if probability_dist > probability:
+                class_probabilities[f'probability_class_{cls}'] = probability * probability_dist
             else:
-                class_probabilities[f'probability_class_{cls}'] = (probability_dist)
-        # Find the class with the maximum probability
+                class_probabilities[f'probability_class_{cls}'] = probability_dist
+        
+        # If no classes remain after filtering, use the class with the highest confidence score
+        if not class_probabilities:
+            class_probabilities = {f'probability_class_{cls}': probability_dist for cls in unique_classes}
+        
         max_class = max(class_probabilities, key=class_probabilities.get)
         max_probability = class_probabilities[max_class]
-
+        
         # Store results
         probabilities[f"{level}_predicted"] = max_class.replace("probability_class_", "")
         probabilities[f"{level}_confidence_score"] = max_probability
-        probabilities[f"{level}_mean_dist_threshold"] = np.mean(x[f'{level}_dist'])
+        probabilities[f"{level}_mean_dist_threshold"] = np.mean(x_filtered[f'{level}_dist'])
         
     return pd.Series(probabilities)
 

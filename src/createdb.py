@@ -28,7 +28,7 @@ from confidence_score import confidence_score
 import yaml
 from multiprocessing import Pool, Manager, cpu_count
 from joblib import Parallel, delayed
-
+from KmerTokenizer import KmerTokenizer
 
 def read_fasta(file_path, buffer_size=4194304):
     x_header = []
@@ -116,19 +116,17 @@ def read_fastq(file_path):
 
 
 
-def initialize_tokenizer():
-    # needs to adjust in future @l@
-    global tokenizer
-    tokenizer = KmerTokenizer(kmerlen=6, overlapping=True, maxlen=4096)
+
 
 def tokenize_sequence(sequence, tokenizer):
-    return tokenizer.kmer_tokenize([sequence])
+    return tokenizer.kmer_tokenize(sequence)
 
-def kmer_tokenize(seqlist, tokenizer, n_jobs=12):
+def kmer_tokenize(seqlist, n_jobs=12):
+    tokenizer = KmerTokenizer(kmerlen=6, overlapping=True, maxlen=4096)
     tokenized_sequences = Parallel(n_jobs=n_jobs)(
         delayed(tokenize_sequence)(sequence, tokenizer) for sequence in tqdm(seqlist)
     )
-    return tokenized_sequences
+    return np.array(tokenized_sequences)
 
 
 
@@ -182,8 +180,8 @@ def load_data(max_len,db_fasta,test_fasta,cal_kmer_freq):
         data_train=calculate_kmer_frequencies(data_train)
         data_test=calculate_kmer_frequencies(data_test)
     else:
-        data_train=kmer_tokenize(data_train,maxlen=max_len) 
-        data_test=kmer_tokenize(data_test,maxlen=max_len)
+        data_train=kmer_tokenize(data_train) 
+        data_test=kmer_tokenize(data_test)
 
     return data_train,data_test,train_indices,test_indices
 
@@ -194,47 +192,72 @@ def load_data(max_len,db_fasta,test_fasta,cal_kmer_freq):
 def load_model(weights_p,from_embedding,embedding_size):
     print("Loading Model ....")
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    state = torch.load(weights_p, map_location=torch.device(device))['model_state_dict']
-    model = torch.load(weights_p, map_location=torch.device(device))["Tuner"]
-    model.from_embedding=from_embedding
-    model.embedding_size=embedding_size
-    model.load_state_dict(state)
+    # state = torch.load(weights_p, map_location=torch.device(device))['model_state_dict']
+    # model = torch.load(weights_p, map_location=torch.device(device))["Tuner"]
+    
+    # Load the state_dict
+    state = torch.load(weights_p, map_location=device)
+    # Initialize your model
+    model = Tuner(pretrained_model="MsAlEhR/MetaBERTa-bigbird-gene", embedding_size=1024, from_embedding=False)
+    # model.from_embedding=from_embedding
+    # model.embedding_size=embedding_size
+    model.load_state_dict(state, strict=False)
     model = model.eval()
+    print(".....")
     return model
 
 
 
-def compute_embeddings(model, raw_embedding_test, raw_embedding_train,output,batch_size):
-    print("Generating embeddings ....")
-    
-    # Process test set
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+import pytorch_lightning as pl
+from torch.utils.data import DataLoader, TensorDataset
+import torch
+import numpy as np
 
-    if isinstance(model, torch.nn.DataParallel):
-        model = model.module
+class EmbeddingModel(pl.LightningModule):
+    def __init__(self, model):
+        super(EmbeddingModel, self).__init__()
+        self.model = model
+
+    def forward(self, batch):
+        return self.model.single_pass(batch)
+
+def compute_embeddings(model, raw_embedding_test, raw_embedding_train, output, batch_size):
+    print("Generating embeddings ...")
     
-    model=model.to(device)
-    model.eval()
-    with torch.no_grad(): 
-        triplet_embedding_test = []
-        for i in tqdm(range(0, len(raw_embedding_test), batch_size)):
-            batch = raw_embedding_test[i:i + batch_size].to(device)
-            batch = model.single_pass(batch)
-            triplet_embedding_test.append(batch)
-        triplet_embedding_test = torch.cat(triplet_embedding_test, dim=0).squeeze().to("cpu").detach().numpy()
-        np.save(f"{output}/val_embeddings.npy", triplet_embedding_test)
+    # Wrap your model in a LightningModule
+    embedding_model = EmbeddingModel(model)
+
+    # PyTorch Lightning Trainer for multi-GPU inference
+    trainer = pl.Trainer(
+        accelerator='gpu',        # Use GPU(s)
+        devices=torch.cuda.device_count(),  # Automatically use all available GPUs
+        precision=16,             # Use mixed precision for faster inference
+        strategy="dp",           # Use Distributed Data Parallel strategy for efficient multi-GPU usage
+        inference_mode=True       # Enable inference mode for optimizations
+    )
+
+    def process_dataset(dataset, save_path):
+        print(type(dataset),type(dataset[0]),dataset.shape,"eeeeeeeeeeeeeee")
+        # Create DataLoader for the entire dataset
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=12, pin_memory=True)
+    
+        # Use the trainer to predict on the entire dataset
+        predictions = trainer.predict(embedding_model, dataloaders=dataloader)
         
-        print(triplet_embedding_test.shape,"lenght of embeddings")
-        # Process test set
-        triplet_embedding_train = []
-        for i in tqdm(range(0, len(raw_embedding_train), batch_size)):
-            batch = raw_embedding_train[i:i + batch_size].to(device)
-            batch = model.single_pass(batch)
-            triplet_embedding_train.append(batch)
-        triplet_embedding_train = torch.cat(triplet_embedding_train, dim=0).squeeze().to("cpu").detach().numpy()
-        np.save(f"{output}/db_embeddings.npy", triplet_embedding_train)    
-    return triplet_embedding_test, triplet_embedding_train
+        # Concatenate all predictions into one tensor
+        embeddings = torch.cat(predictions, dim=0).cpu().detach().numpy()
+        
+        # Save the embeddings to a file
+        np.save(save_path, embeddings)
+        print(f"Saved embeddings to {save_path}. Shape: {embeddings.shape}")
+        return embeddings
 
+
+    # Process test and train datasets
+    triplet_embedding_test = process_dataset(raw_embedding_test, f"{output}/val_embeddings.npy")
+    triplet_embedding_train = process_dataset(raw_embedding_train, f"{output}/db_embeddings.npy")
+
+    return triplet_embedding_test, triplet_embedding_train
 
 
 def create_index(embedding,ouput):
@@ -320,9 +343,10 @@ def main(batch_size, max_len, output, scorpio_model, db_fasta, db_embedding, cal
         
     model = load_model(weights_p,from_embedding,embedding_size)
 
-    raw_embedding_train = torch.tensor(raw_embedding_train).to("cpu")
-    raw_embedding_test = torch.tensor(raw_embedding_test).to("cpu")
+    raw_embedding_train = torch.as_tensor(raw_embedding_train)
+    raw_embedding_test = torch.as_tensor(raw_embedding_test)
 
+    print("..........")
     
     triplet_embedding_test, triplet_embedding_train = compute_embeddings(model, raw_embedding_test, raw_embedding_train,output,batch_size)
     
