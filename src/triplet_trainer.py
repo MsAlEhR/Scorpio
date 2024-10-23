@@ -145,7 +145,7 @@ class TripletLightningModel(pl.LightningModule):
         with autocast():
             anchor, pos, neg = self.model(X)
             loss = self.criterion(anchor, pos, neg, Y, sim, self.monitor,self.current_epoch)
-        self.log('loss', loss, on_epoch=True, prog_bar=True)
+        self.log('train_loss', loss, on_epoch=True, prog_bar=True)
 
         return loss
             
@@ -306,7 +306,7 @@ def main():
     
     trainer = Trainer(
         max_epochs=args.num_epochs,
-        val_check_interval=0.03,
+        val_check_interval=0.1,
         strategy=strategy,  # Switch between dp and None
         precision=16 if num_gpus > 0 else 32,  # 16-bit precision for GPUs, 32-bit for CPU
         accelerator='gpu' if num_gpus > 0 else 'cpu',  # Automatically use GPU or CPU
