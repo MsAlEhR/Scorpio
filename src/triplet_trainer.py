@@ -5,23 +5,31 @@ Email: sr3622@drexel.edu
 
 import numpy as np
 import torch
-import torch.utils.data
 import torch.nn as nn
-from torch.autograd import Variable
+import pytorch_lightning as pl
+from torch.utils.data import DataLoader,Dataset
 from pathlib import Path
-import time
-import random
-import copy
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-from utils import *
-from TripletModel import Tuner
 import argparse
 from KmerTokenizer import KmerTokenizer
 from Bio import SeqIO
-from torch.cuda.amp import GradScaler, autocast
 from joblib import Parallel, delayed
-
+from utils import *
+from TripletModel import Tuner
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning import Trainer
+from torch.cuda.amp import GradScaler, autocast
+import warnings
+import torch.distributed as dist
+from pytorch_lightning.callbacks import ModelCheckpoint
+from tqdm import tqdm
+import logging
+from pytorch_lightning.strategies import DDPStrategy
+import datetime
+from multiprocessing import Manager
+import pickle
+from pathlib import Path
+import csv
+import yaml
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -35,260 +43,297 @@ def str2bool(v):
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output', type=str, help="Output Directory")
-    parser.add_argument('--input', type=str, help="Input Directory")
+    parser.add_argument('--output', type=str, help="Output Directory (Model Output)")
+    parser.add_argument('--input', type=str, help="Input Directory (Data)")
     parser.add_argument('--exp_name', type=str, help="Experiment Name", default="Triplet_results")
     parser.add_argument('--learning_rate', type=float, default=1e-4, help="Learning Rate")
-    parser.add_argument('--batch_size', type=int, default=32, help="Batch Size")
+    parser.add_argument('--batch_size', type=int, default=128, help="Batch Size")
     parser.add_argument('--num_epochs', type=int, default=150, help="Number of Epochs")
     parser.add_argument('--n_classes', type=int, default=5, help="Number of Levels")
     parser.add_argument('--pre_trained_model', type=str, default="", help="Path to your LLM model or Huggingface model")
     parser.add_argument('--embedding_size', type=int, default=4096, help="Size of the embedding vectors")
     parser.add_argument('--from_embedding', type=str2bool, required=True, help='Use Pre-computed embedding')
+    parser.add_argument('--max_len', type=int, default=1024, help='The Sequence max Length(Tokenizer)')
+    parser.add_argument('--order_levels', nargs='+', default=[1, 2, 3, 4, 5, 6], type=int, help='A list of order H-levels')
+    parser.add_argument('--exclude_easy', type=str2bool, default=False, help='Exclude easy examples')
+    parser.add_argument('--batch_hard', type=str2bool, default=False, help='Use hard negative sampling in batches')
+    parser.add_argument('--margin', type=float, default=0.5, help='Margin for triplet loss')
+
+    
     args = parser.parse_args()
     return args
 
-plt.switch_backend('agg')
-plt.clf()
-
-# Device configuration
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-
-
-
-def initialize_tokenizer():
-    global tokenizer
-    tokenizer = KmerTokenizer(kmerlen=6, overlapping=True, maxlen=4096)
-
-def process_record(record):
+def process_record(record, tokenizer):
+    """Process a single record."""
     header_parts = record.id.split('|')
     if len(header_parts) > 1:
         seq_id = header_parts[1]
         try:
-            embedding = tokenizer.kmer_tokenize([record.seq])
-            return seq_id, embedding
+            embedding = tokenizer.kmer_tokenize(record.seq.upper())
+            return seq_id, np.array(embedding, dtype=np.float16)
         except Exception as e:
-            print(f"Error processing record {seq_id}: {e}")
+            logging.error(f"Error processing record {seq_id}: {e}")
             return None
     return None
 
-def process_batch(records):
+def process_batch(records, tokenizer):
+    """Process a batch of records."""
     local_dict = {}
-    try:
-        results = [process_record(record) for record in records]
-        for tokenized_result in results:
-            if tokenized_result:
-                seq_id, embedding = tokenized_result
-                local_dict[seq_id] = embedding
-    except Exception as e:
-        print(f"Error in process_batch: {e}")
+    for record in records:
+        result = process_record(record, tokenizer)
+        if result:
+            seq_id, embedding = result
+            local_dict[seq_id] = embedding
     return local_dict
 
-def read_and_tokenize(file_path, id2embedding, batch_size=2000, n_jobs=8):
-    initialize_tokenizer()  
-    # Read all records into a list
-    records = list(SeqIO.parse(file_path, "fasta"))
-    print(f"Total records read from {file_path}: {len(records)}")
+def batch_iterator(iterator, batch_size):
+    while True:
+        batch = list(itertools.islice(iterator, batch_size))
+        if not batch:
+            break
+        yield batch
 
-    # Process in parallel using joblib
+
+def read_and_tokenize(file_path,max_len, id2embedding,kmerlen=6, batch_size=500, n_jobs=32):
+    
+    tokenizer = KmerTokenizer(kmerlen=kmerlen, overlapping=True, maxlen=max_len)
+    records = SeqIO.parse(file_path, "fasta")
+    
+    logging.info(f"Processing records in batches from {file_path}...")
     results = Parallel(n_jobs=n_jobs)(
-        delayed(process_batch)(records[i:i + batch_size]) 
-        for i in tqdm(range(0, len(records), batch_size))
+        delayed(process_batch)(batch, tokenizer)
+        for batch in batch_iterator(records, batch_size)
     )
-
-    # Update the main dictionary with the results
+    
     for local_dict in results:
-        if local_dict:
-            id2embedding.update(local_dict)
+        id2embedding.update(local_dict)
+
+
+def create_sorted_embedding_array(id2embedding, embedding_size):
+
+    # Convert id2embedding keys to integers and find the maximum index
+    int_indices = np.array([int(k) for k in id2embedding.keys()])
+    max_index = np.max(int_indices)
+    
+    embedding_array = np.zeros((max_index + 1, embedding_size), dtype=np.float16)
+
+    # Populate the array with the embeddings
+    for idx in int_indices:
+        embedding_array[idx] = id2embedding[str(idx)]
+
+    return embedding_array
 
 
 
-def trainer():
+class TripletLightningModel(pl.LightningModule):
+    def __init__(self, args, data_module):
+        super(TripletLightningModel, self).__init__()
+        self.args = args
+        self.model = Tuner(pretrained_model=args.pre_trained_model, embedding_size=args.embedding_size, from_embedding=args.from_embedding)
+        self.criterion = TripletLoss(exclude_easy=args.exclude_easy, batch_hard=args.batch_hard, margin=args.margin, n_classes=args.n_classes)
+        self.monitor = init_monitor()
+        self.data_module=data_module
+
+    def forward(self, X):
+        return self.model(X)
+
+    def training_step(self, batch, batch_idx):
+        X, Y, sim = batch
+        X, Y = X.to(self.device), Y.to(self.device) 
+        with autocast():
+            anchor, pos, neg = self.model(X)
+            loss = self.criterion(anchor, pos, neg, Y, sim, self.monitor,self.current_epoch)
+        self.log('loss', loss, on_epoch=True, prog_bar=True)
+
+        return loss
+            
+
+    def validation_step(self, batch, batch_idx):
+        # self.log('val_loss', 0, on_epoch=True, prog_bar=False)
+        with open(self.args.monitor_file, 'a', newline='') as csvfile:
+            # Create a CSV writer object
+            csv_writer = csv.writer(csvfile)
+            csv_writer.writerow([
+                len(self.monitor['loss'])*self.args.batch_size,
+                (sum(self.monitor['loss'])-1) / len(self.monitor['loss'])*self.args.batch_size,
+                (sum(self.monitor['norm'])-1) / len(self.monitor['norm'])*self.args.batch_size,
+                (sum(self.monitor['pos'])-1) / len(self.monitor['pos'])*self.args.batch_size,
+                (sum(self.monitor['neg'])-1) / len(self.monitor['neg'])*self.args.batch_size,
+                (sum(self.monitor['min'])-1) / len(self.monitor['min'])*self.args.batch_size,
+                (sum(self.monitor['max'])-1) / len(self.monitor['max'])*self.args.batch_size,
+                (sum(self.monitor['mean'])-1) / len(self.monitor['mean'])*self.args.batch_size,
+                self.monitor['pos'][-1],
+                self.monitor['neg'][-1],
+                self.monitor['loss'][-1],
+            ])        
+       
+        return 0
+
+    
+    # def on_validation_epoch_end(self):
+    #     # Perform custom validation tasks
+    #     if self.data_module.val20:
+    #         start = time.time()
+    #         # acc_dict, err_dict = testing(self.model, self.data_module.val20)  # Assuming these are dictionaries
+    #         validation_time = time.time() - start
+    #         # Log each accuracy and error value separately
+    #         # print("Each Task ,acc across levels :",[(f'val_acc_{key}', float(acc_dict[key][-1])) for key in acc_dict.keys()])  
+    #         self.log('val_time', validation_time, prog_bar=True, sync_dist=True)
+
+    
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=self.args.learning_rate, amsgrad=True)
+        
+        
+####### need to fix later
+class DummyDataset(Dataset):
+    def __len__(self):
+        return 1  # Just one batch
+
+    def __getitem__(self, idx):
+        return 0, 1  # Dummy data, adjust as needed
+
+
+class LazyEmbeddingDict:
+    def __init__(self, embedding_file):
+        # Load the .npy file as a memory-mapped array (no need to specify shape)
+        self.id2embedding = np.load(embedding_file, mmap_mode='r')
+
+    def __getitem__(self, key):
+        # Access the specific embedding based on the provided ID (key)
+        embedding_np = self.id2embedding[int(key)][np.newaxis, :]  # Add new axis to match shape
+        # Convert to PyTorch tensor and return
+        return torch.tensor(embedding_np)
+
+
+class TripletDataModule(pl.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        self.data_dir = Path(args.input)
+        self.id2embedding = dict() 
+        self.val20 = None
+        self.embedding_dict_path = self.data_dir / "encodings.npy"
+        
+    def prepare_data(self):
+    
+        
+        reorder(self.data_dir,self.args.order_levels)
+        
+        if not self.args.from_embedding:
+            print("Tokenizing.....")
+            read_and_tokenize(self.data_dir / "val.fasta",self.args.max_len, self.id2embedding)
+            read_and_tokenize(self.data_dir / "train.fasta",self.args.max_len, self.id2embedding)
+            print("Saving the id2embedding array",len(self.id2embedding))
+            np.save(self.embedding_dict_path, create_sorted_embedding_array(self.id2embedding, self.args.max_len))
+            self.id2embedding = dict()
+            
+
+    def setup(self, stage=None):
+        
+        self.id2embedding = LazyEmbeddingDict(self.embedding_dict_path)
+        self.datasplitter = DataSplitter(self.data_dir, self.id2embedding, self.args.n_classes)
+        self.train_splits, self.val, self.val_lookup = self.datasplitter.get_predef_splits()
+        self.train_dataset = CustomDataset(self.train_splits, self.datasplitter, self.args.n_classes)
+        self.train_dataset.get_example()
+        # self.val20 = Eval(self.val_lookup, self.val, self.datasplitter, self.args.n_classes)
+
+
+    def train_dataloader(self):
+        return self._create_dataloader(self.train_dataset, self.args.batch_size)
+
+    def val_dataloader(self):
+        # Return a DataLoader with a dummy dataset
+        dummy_dataset = DummyDataset()
+        return DataLoader(dummy_dataset, batch_size=1)
+
+    def _create_dataloader(self, dataset, batch_size):
+        my_collator = MyCollator()
+        return DataLoader(dataset=dataset,
+                          batch_size=batch_size,
+                          shuffle=True,  # Shuffling is generally desirable for training
+                          drop_last=True,
+                          collate_fn=my_collator,
+                          pin_memory=True,
+                          num_workers=10  # Adjust based on your system's capabilities
+                          )
+
+def save_args_to_yaml(args, file_path):
+    # Convert Namespace to a dictionary
+    args_dict = vars(args)
+
+    # Save dictionary to YAML
+    with open(file_path, 'w') as yaml_file:
+        yaml.dump(args_dict, yaml_file, default_flow_style=False)
+
+def main():
     args = parse_arguments()
 
-    # Access the parameters
-    output_path = args.output
-    input_path = args.input
-    exp_name = args.exp_name
-    learning_rate = args.learning_rate
-    batch_size = args.batch_size
-    num_epochs = args.num_epochs
-    n_classes = args.n_classes
-    pre_trained_model = args.pre_trained_model
-    embedding_size = args.embedding_size
-    from_embedding = args.from_embedding
-
-    # Hyperparameters
-    start_overall = time.time()
-    SEED = 83
-    seed_all(SEED)
-
-    data_dir = Path(input_path)
-    log_dir = Path(output_path) / 'trainer'
-
-    #reording the levels
-    # order = [6,7,1,2,3,4,5]
-    # reorder(data_dir,order)
-
-    ids = pd.read_csv(os.path.join(data_dir, 'hierarchical-level.txt'), sep="\t", header=None)[0].tolist()
-
-    if from_embedding:
-        embedding_p = os.path.join(data_dir, "embeddings.npy")
-        embedding_list = np.load(embedding_p, mmap_mode='r')
-        id2embedding = {str(seq_id): embedding_list[int(seq_id)][np.newaxis, :] for seq_id in ids}
-        print("Loading dataset from: {}".format(embedding_p))
-    else:
-        print("Tokenizing.....")
-        
-        # Initialize the shared dictionary
-        id2embedding = dict()
-        
-        
-        start_time = time.time()
-        read_and_tokenize(data_dir / "val.fasta", id2embedding)
-        val_time = time.time() - start_time
-        print(f"Time to process validation set: {val_time:.6f} seconds")
-        
-        start_time = time.time()
-        read_and_tokenize(data_dir / "train.fasta", id2embedding)
-        train_time = time.time() - start_time
-        print(f"Time to process training set: {train_time:.6f} seconds")
+    args.monitor_file = str(Path(args.output) / "monitor.csv")
     
-        print(f"Number of embeddings: {len(id2embedding)}")  
+    os.makedirs(args.output, exist_ok=True)
 
+    save_args_to_yaml(args, Path(args.output) / "train_args.yaml")
+    
 
+    with open(args.monitor_file, 'w', newline='') as csvfile:
+        # Create a CSV writer object
+        csv_writer = csv.writer(csvfile)
+        csv_writer.writerow([ 'number','loss', 'norm', 'pos', 'neg', 'min', 'max', 'mean','last_batch_pos','last_batch_neg','last_batch_loss'])    
 
-    experiment_dir = log_dir / exp_name
+   # Define the ModelCheckpoint callback
+    checkpoint_callback = ModelCheckpoint(
+        monitor='train_loss',  # Metric to monitor
+        dirpath=args.output,  # Directory to save checkpoints
+        filename='model-{epoch:02d}-{step:02d}-{train_loss:.3f}',  # Filename format
+        save_top_k=1,  # Save only the best model
+        mode='min',  # Mode to minimize the monitored metric (e.g., 'min' for loss)
+        every_n_train_steps=1000  # Save checkpoint every 500 training steps
+    )
 
-    if not experiment_dir.is_dir():
-        print("Creating new log-directory: {}".format(experiment_dir))
-        experiment_dir.mkdir(parents=True)
-
-    n_bad = 3  # counter for number of epochs that did not improve (counter for early stopping)
-    n_thresh = num_epochs  # threshold for number of epochs that did not improve (threshold for early stopping)
-    batch_hard = True  # whether to activate batch_hard sampling (recommended)
-    exclude_easy = False  # whether to exclude trivial samples (did not improve performance)
-    margin = 0.6  # set this to a float to activate threshold-dependent loss functions (see TripletLoss)
-    monitor_plot = True
-
-    # Initialize plotting class (used to monitor loss etc during training)
-    pltr = plotter(experiment_dir)
-
-    # Prepare datasets
-    datasplitter = DataSplitter(data_dir, id2embedding, n_classes)
-    train_splits, val, val_lookup = datasplitter.get_predef_splits()
-
-    val20 = Eval(val_lookup, val, datasplitter, n_classes)
-
-    train = CustomDataset(train_splits, datasplitter, n_classes)
-    train_loader = dataloader(train, batch_size)
-
-    # Get the size of the dataset
-    dataset_size = len(train_loader.dataset)
-    print("Dataset size:", dataset_size)
-
-    model = Tuner(pretrained_model=pre_trained_model, embedding_size=embedding_size, from_embedding=from_embedding)
-    if torch.cuda.device_count() > 1:
-        print(f"Using {torch.cuda.device_count()} GPUs")
-        model = nn.DataParallel(model)
-    model.to(device)
-
-    criterion = TripletLoss(exclude_easy=exclude_easy, batch_hard=batch_hard, margin=margin, n_classes=n_classes)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, amsgrad=True)
-    scaler = GradScaler()
-
-    saver = Saver(experiment_dir, n_classes)
-    saver.save_checkpoint(model, 0, optimizer, experiment_dir / 'checkpoint.pt')
-    baseline_acc, baseline_err = get_baseline(val20, n_classes)
-
-    print('###### Training parameters ######')
-    print('Experiment name: {}'.format(experiment_dir))
-    print('LR: {}, BS: {}, free Paras.: {}, n_epochs: {}'.format(learning_rate, batch_size, count_parameters(model), num_epochs))
-    print('#############################\n')
-    print('Start training now!')
-
-    monitor = init_monitor()
-    for epoch in tqdm(range(num_epochs)):  # for each epoch
-
-        # =================== testing =====================
-        start = time.time()
-        if isinstance(model, nn.DataParallel):
-            acc, err = testing(model.module, val20)  # Access original model methods using .module
-        else:
-            acc, err = testing(model, val20)
-            
-        test_time = time.time() - start
+    
+    if torch.cuda.is_available():
+        num_gpus = torch.cuda.device_count()
+        strategy = 'dp' if num_gpus > 1 else None
+    else:
+        num_gpus = 0
+        strategy = None  # Use CPU if no GPU is available
+    
+    # Set devices based on the available hardware
+    devices = num_gpus if num_gpus > 0 else 1  # 1 for CPU
+    
+    trainer = Trainer(
+        max_epochs=args.num_epochs,
+        val_check_interval=0.03,
+        strategy=strategy,  # Switch between dp and None
+        precision=16 if num_gpus > 0 else 32,  # 16-bit precision for GPUs, 32-bit for CPU
+        accelerator='gpu' if num_gpus > 0 else 'cpu',  # Automatically use GPU or CPU
+        devices=devices,
+        accumulate_grad_batches=4,
+        callbacks=[checkpoint_callback]
+    )
+    
+    data_module = TripletDataModule(args)
         
-        new_best = saver.check_performance(acc, model, epoch, optimizer)  # early stopping class
+    # Initialize the model, passing the val20 object
+    model = TripletLightningModel(args,data_module)
+    
+    print("Training Started...")
 
-        if new_best is None:  # if the new accuracy was worse than a previous one
-            n_bad += 1
-            if n_bad >= n_thresh:  # if more than n_bad consecutive epochs were worse, break training
-                break
-        else:  # if the new accuracy is larger than the previous best one by epsilon, reset counter
-            n_bad = 0
-
-        # =================== training =====================
-        # monitor epoch-wise performance
-        epoch_monitor = init_monitor()
-        start = time.time()
-
-        for train_idx, (X, Y, sim) in enumerate(train_loader):  # for each batch in the training set
-            X, Y = X.to(device), Y.to(device)
+    saver = Saver(Path(args.output))
+    
+    
+    trainer.fit(model, data_module)
+    
+    # After training, get the best checkpoint path
+    best_checkpoint_path = checkpoint_callback.best_model_path
+    print(f"Best checkpoint saved at: {best_checkpoint_path}")
+    
+    if trainer.is_global_zero:
+        saver.save_checkpoint(model, args.num_epochs, {},Path(args.output)/'checkpoint.pt')
         
-            if torch.cuda.is_available():
-                with autocast():
-                    anchor, pos, neg = model(X)
-                    loss = criterion(anchor, pos, neg, Y, sim, epoch_monitor, epoch)
-        
-                optimizer.zero_grad()
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                anchor, pos, neg = model(X)
-                loss = criterion(anchor, pos, neg, Y, sim, epoch_monitor, epoch)
-        
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-        train_time = time.time() - start
-
-        # Monitor various metrics during training
-        if monitor_plot:
-            monitor['loss'].append(sum(epoch_monitor['loss']) / len(epoch_monitor['loss']))
-            monitor['norm'].append(sum(epoch_monitor['norm']) / len(epoch_monitor['norm']))
-            monitor['pos'].append(sum(epoch_monitor['pos']) / len(epoch_monitor['pos']))
-            monitor['neg'].append(sum(epoch_monitor['neg']) / len(epoch_monitor['neg']))
-            monitor['min'].append(sum(epoch_monitor['min']) / len(epoch_monitor['min']))
-            monitor['max'].append(sum(epoch_monitor['max']) / len(epoch_monitor['max']))
-            monitor['mean'].append(sum(epoch_monitor['mean']) / len(epoch_monitor['mean']))
-
-        # Log results and plot
-        if epoch % 2 == 0 or epoch == num_epochs - 1:  # draw plots only every fifth epoch
-            pltr.plot_acc(acc, baseline_acc, n_classes)
-            pltr.plot_distances(monitor['pos'], monitor['neg'])
-            pltr.plot_loss(monitor['loss'], file_name='loss.pdf')
-            pltr.plot_loss(monitor['norm'], file_name='norm.pdf')
-            pltr.plot_minMaxMean(monitor)
-
-        print(('epoch [{}/{}], train loss: {:.3f}, train-time: {:.1f}[s], test-time: {:.1f}[s], ' +
-              ', '.join('ACC-{}: {:.2f}'.format(i, acc[i][-1]) for i in range(n_classes)) +
-              ' ## Avg. Acc: {:.2f}').format(
-            epoch + 1, num_epochs,
-            sum(epoch_monitor['loss']) / len(epoch_monitor['loss']),
-            train_time, test_time,
-            *(acc[i][-1] for i in range(n_classes)),
-            sum(acc[i][-1] for i in range(n_classes)) / n_classes
-        ))
-
-    end_overall = time.time()
-    print(end_overall - start_overall)
-    print("Total training time: {:.1f}[m]".format((end_overall - start_overall) / 60))
-    return None
 
 if __name__ == '__main__':
-    trainer()
+    main()

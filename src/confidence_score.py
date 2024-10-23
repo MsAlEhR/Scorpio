@@ -97,11 +97,35 @@ def train_distance_confidence(df,hierarchy,level,num_distance=4000) :
         df = df[df[f'{upper_level}_query'] ==df[f'{upper_level}_target']]
     
 
-    # df_mms = df_mms.groupby(0).nth(5)
+
+
+    # # Let's assume df[2] is the column you are sampling from
+    # column_values = df[2].values
+    
+    # # Calculate histogram to identify dominant regions
+    # hist, bin_edges = np.histogram(column_values, bins=50)  # Adjust the number of bins if necessary
+    
+    # # Find the most frequent (dominant) regions
+    # dominant_bins = bin_edges  # Taking top 5 dominant bins, adjust if needed
+    # print(dominant_bins)
+    # # Generate more samples around the dominant bins
+    # dominant_samples = []
+    # for bin_start, bin_end in zip(dominant_bins[:-1], dominant_bins[1:]):
+    #     dominant_samples.extend(np.linspace(bin_start, bin_end, int(num_distance / 5)))  # Denser sampling around dominant regions
+    
+    # # Generate evenly spaced distance values across the full range
+    # min_distance = column_values.min()
+    # max_distance = column_values.max()
+    # even_samples = np.linspace(min_distance, max_distance, int(num_distance * 0.7))  # Fewer samples in non-dominant regions
+    
+    # # Combine both dominant and evenly spaced samples
+    # distance_values = dominant_samples
+    
+
     # Calculate the minimum and maximum values of df_mms[2]
     min_distance = df[2].min()
     max_distance = df[2].max()
-    
+    print(min_distance,max_distance,len(df))
     # Generate evenly spaced distance values within the range
     distance_values = np.linspace(min_distance, max_distance, num_distance)
 
@@ -125,7 +149,6 @@ def train_distance_confidence(df,hierarchy,level,num_distance=4000) :
     X = np.array(distance_values[1:])  # Ensure X is a 2D array
     X = X.reshape(-1, 1) 
     y =metrics_values[1:]
-        
     model, r2, y_pred = train_pytorch_model(X, y)
 
 
