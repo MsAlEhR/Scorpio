@@ -277,7 +277,7 @@ def main():
 
     save_args_to_yaml(args, Path(args.output) / "train_args.yaml")
     
-
+    seed_all(seed=42)
     with open(args.monitor_file, 'w', newline='') as csvfile:
         # Create a CSV writer object
         csv_writer = csv.writer(csvfile)
