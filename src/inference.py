@@ -220,6 +220,7 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
     model_name = f"{scorpio_model}"
     weights_p = model_name+"/checkpoint.pt"
 
+
     # Loading Index
     index = faiss.read_index(os.path.join(db_path, 'faiss_index'))
     

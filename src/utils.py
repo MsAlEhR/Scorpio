@@ -506,7 +506,7 @@ class Eval():
         self.lookupIdx2label = self.preproc(lookup)
         self.testIdx2label = self.preproc(test)
         self.test = torch.tensor(np.array(list(test.values()))).squeeze(dim=1)
-        self.lookup = torch.tensor(np.array(list(lookup.values()))).squeeze(dim=1)
+        self.lookup = torch.tensor(np.array(list(lookup.values()))).squeeze(dim=1)      
         self.id2label, self.label2id = datasplitter.parse_label_mapping(
             # use only keys from the given lookup set
             set(lookup) | set(test),
@@ -730,16 +730,16 @@ class TripletLoss(object):
         if self.exclude_easy:
             loss = loss.sum() / (loss < 0).sum()
 
-        embeddings = torch.cat((anchor, pos, neg))
-        monitor['pos'].append(toCPU(dist_ap.mean()))
-        monitor['neg'].append(toCPU(dist_an.mean()))
+        # embeddings = torch.cat((anchor, pos, neg))
+        # monitor['pos'].append(toCPU(dist_ap.mean()))
+        # monitor['neg'].append(toCPU(dist_an.mean()))
 
-        monitor['min'].append(toCPU(embeddings.min(dim=1)[0].mean()))
-        monitor['max'].append(toCPU(embeddings.max(dim=1)[0].mean()))
-        monitor['mean'].append(toCPU(embeddings.mean(dim=1).mean()))
+        # monitor['min'].append(toCPU(embeddings.min(dim=1)[0].mean()))
+        # monitor['max'].append(toCPU(embeddings.max(dim=1)[0].mean()))
+        # monitor['mean'].append(toCPU(embeddings.mean(dim=1).mean()))
 
-        monitor['loss'].append(toCPU(loss))
-        monitor['norm'].append(toCPU(torch.norm(embeddings, p='fro')))
+        # monitor['loss'].append(toCPU(loss))
+        # monitor['norm'].append(toCPU(torch.norm(embeddings, p='fro')))
 
         return loss
 
@@ -940,15 +940,15 @@ class TripletLoss(object):
 def init_monitor():
     monitor = dict()
 
-    monitor['loss'] = [1]
-    monitor['norm'] = [1]
+    monitor['loss'] = []
+    monitor['norm'] = []
 
-    monitor['pos'] = [1]
-    monitor['neg'] = [1]
+    monitor['pos'] = []
+    monitor['neg'] = []
 
-    monitor['min'] = [1]
-    monitor['max'] = [1]
-    monitor['mean'] = [1]
+    monitor['min'] = []
+    monitor['max'] = []
+    monitor['mean'] = []
     return monitor
 
 

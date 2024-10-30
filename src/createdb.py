@@ -34,7 +34,8 @@ from transformers import AutoTokenizer, AutoModel
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, TensorDataset
 
-
+from transformers import logging
+logging.set_verbosity_error()
 
 def read_fasta(file_path, buffer_size=4194304):
     x_header = []
@@ -130,7 +131,7 @@ def kmer_tokenize(seqlist,maxlen, n_jobs=12):
     tokenized_sequences = Parallel(n_jobs=n_jobs)(
         delayed(tokenize_sequence)(sequence, tokenizer) for sequence in tqdm(seqlist)
     )
-    return np.array(tokenized_sequences)
+    return np.array(tokenized_sequences, dtype=np.float16)
 
 
 
@@ -148,19 +149,19 @@ def read_fasta_or_fastq(file_path):
 
 
 
-def calculate_single_sequence_kmer_frequencies(sequence, possible_kmers, k, sequence_len, index):
+def calculate_single_sequence_kmer_frequencies(sequence, sorted_vocab, k, sequence_len, index):
     sequence = sequence.upper()
     sequence_kmer_counts = Counter(sequence[j:j+k] for j in range(sequence_len - k + 1))
-    frequencies = np.array([sequence_kmer_counts.get(kmer, 0) / sequence_len for kmer in possible_kmers], dtype=np.float16)
+    frequencies = np.array([sequence_kmer_counts.get(kmer, 0) / sequence_len for kmer in sorted_vocab], dtype=np.float16)
     return index, frequencies
 
 def calculate_kmer_frequencies(sequences, k=6, n_jobs=16):
-    possible_kmers = [''.join(p) for p in product('ACTG', repeat=k)]  
+    sorted_vocab = [vocab for vocab, index in sorted(KmerTokenizer(kmerlen=6, overlapping=True, maxlen=4096).get_vocab().items(), key=lambda item: item[1])]
 
     # Parallel processing with index tracking
     frequencies_with_indices = Parallel(n_jobs=n_jobs)(
         delayed(calculate_single_sequence_kmer_frequencies)(
-            sequence, possible_kmers, k, len(sequence), idx
+            sequence, sorted_vocab, k, len(sequence), idx
         ) for idx, sequence in enumerate(tqdm(sequences))
     )
 
@@ -195,7 +196,7 @@ def load_data(max_len,db_fasta,test_fasta,cal_kmer_freq):
 
 
 
-def load_model(weights_p,from_embedding,embedding_size):
+def load_model(weights_p,motif_freq,embedding_size):
     print("Loading Model ....")
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     state = torch.load(weights_p, map_location=torch.device(device))['model_state_dict']
@@ -213,67 +214,74 @@ def load_model(weights_p,from_embedding,embedding_size):
         else:
             new_key = key
         state[new_key] = new_state_dict[key]  
-    model.from_embedding=from_embedding
-    model.embedding_size=embedding_size
+    model.motif_freq=motif_freq
+    # model.embedding_size=embedding_size
     model.load_state_dict(state)
     model = model.eval()
+    print(model)
     print("Done")
     return model
 
-
-
-# # Custom Average Pooling Layer
 # class AveragePool1dAlongAxis(nn.Module):
 #     def __init__(self, axis):
 #         super(AveragePool1dAlongAxis, self).__init__()
 #         self.axis = axis
 
-#     def forward(self, x):
-#         # Apply mean along the specified axis
+#     def forward(self, x, mask=None):
 #         return torch.mean(x, dim=self.axis)
+
+## Custom Average Pooling Layer
+# class AveragePool1dAlongAxis(nn.Module):
+#     def __init__(self, axis):
+#         super(AveragePool1dAlongAxis, self).__init__()
+#         self.axis = axis
+
+#     def forward(self, x, mask=None):
+#         if mask is not None:
+#             # Zero out padded tokens
+#             x = x * mask.unsqueeze(-1).float()
+#             # Sum and divide by non-zero counts to get the mean of non-padded tokens
+#             summed = torch.sum(x, dim=self.axis)
+#             counts = torch.clamp(mask.sum(dim=self.axis, keepdim=True), min=1)  # Avoid division by zero
+#             return summed / counts
+#         else:
+#             # Default mean along the axis
+#             return torch.mean(x, dim=self.axis)
 
 # # Define the new model that includes the averaging layer
 # class ModelWithAveraging(nn.Module):
-#     def __init__(self, base_model, axis=1):
+#     def __init__(self, axis=1):
 #         super(ModelWithAveraging, self).__init__()
-#         # 2024-February-25_01-26-04_AM
-#         #2024-March-13_13-43-51_PM
 #         self.pretrained_model = AutoModel.from_pretrained("MsAlEhR/MetaBERTa-bigbird-gene", output_hidden_states=True)
 #         self.avg_pooling = AveragePool1dAlongAxis(axis)  # Averaging layer
-#         # self.base_model = base_model  # The original model to load
 
 #     def single_pass(self, X):
-#         X = X.long() 
-#         outputs = self.pretrained_model(X)
+#         X = X.long()
+#         attention_mask = (X != 2).int()  # Mask where padding tokens (ID = 2) are marked as False
+#         outputs = self.pretrained_model(X,encoder_attention_mask=attention_mask, attention_mask=attention_mask)
 #         last_hidden_state = outputs.hidden_states[-1]
-#         x = self.avg_pooling(last_hidden_state)
-#         # pooled_output = self.base_model(x)
-#         return x
+        
+#         # Apply average pooling while masking out padding tokens
+#         pooled_output = self.avg_pooling(last_hidden_state, mask=attention_mask)
+
+#         return pooled_output
 
 
 # class Tuner(nn.Module):
-#     def __init__(self, pretrained_model="", embedding_size=4096, from_embedding=True):
+#     def __init__(self, pretrained_model="", motif_freq=True):
 #         super(Tuner, self).__init__()
-
 #         self.Tuner = nn.Sequential()
-
 
 #     def forward(self, X):
 #         pooled_output = self.Tuner(X)
 #         return pooled_output
 
 
-# def load_model(weights_p, from_embedding, embedding_size, axis=1):
+# def load_model(weights_p, motif_freq, embedding_size, axis=1):
 #     print("Loading Model ....")
 #     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    
-#     # Load the base model from the saved checkpoint (assuming 'Tuner' is the model)
-#     # base_model = torch.load(weights_p, map_location=device)["Tuner"]
-#     # Load the pre-trained state dict into the new model (you might need to adjust how state dict loading works based on the model structure)
-#     # state = torch.load(weights_p, map_location=device)['model_state_dict']
-#     # base_model.load_state_dict(state)  # 'strict=False' in case there are some differences in state dict    
 #     # Create the new model with the averaging layer
-#     model = ModelWithAveraging("", axis)
+#     model = ModelWithAveraging(axis)
 #     # Move model to device and set to evaluation mode
 #     print(model)
 #     model.to(device)
@@ -290,15 +298,13 @@ class EmbeddingModel(pl.LightningModule):
         super(EmbeddingModel, self).__init__()
         self.model = model
 
+
     def forward(self, batch):
-        # Perform forward pass on batch and anchor batch
-        vec1 = self.model.single_pass(batch)
-        ##### these are for new idea
-        # vec2 = self.model.single_pass_anchor(batch)
-        # Concatenate the two vectors along the correct dimension
-        # vec = torch.cat((vec1, vec2), dim=-1)  # Concatenating along the last dimension
-        
-        return vec1
+        if self.model.motif_freq : 
+            vec = self.model.single_pass_freq(batch)
+        else:
+            vec = self.model.single_pass(batch)
+        return vec
 
 
 
@@ -415,6 +421,7 @@ def main(batch_size, max_len, output, scorpio_model, db_fasta, db_embedding, cal
 
     model_name = f"{scorpio_model}"
     weights_p =os.path.join(model_name, 'checkpoint.pt')
+
     
     raw_embedding_train,raw_embedding_test,train_indices,test_indices  = load_data(max_len,db_fasta,val_fasta,cal_kmer_freq)
 
@@ -423,14 +430,14 @@ def main(batch_size, max_len, output, scorpio_model, db_fasta, db_embedding, cal
     if db_embedding :
         raw_embedding_train= np.load(db_embedding)
         raw_embedding_test= np.load(val_embedding)
-        from_embedding = True
+        motif_freq = True
         embedding_size=raw_embedding_train.shape[1]
     else:    
-        from_embedding = True if cal_kmer_freq else False
+        motif_freq = True if cal_kmer_freq else False
         embedding_size=len(raw_embedding_train[0])
         
 
-    model = load_model(weights_p,from_embedding,embedding_size)
+    model = load_model(weights_p,motif_freq,embedding_size)
     raw_embedding_train = torch.as_tensor(raw_embedding_train)
     raw_embedding_test = torch.as_tensor(raw_embedding_test)
 

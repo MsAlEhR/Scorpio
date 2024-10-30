@@ -24,6 +24,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from tqdm import tqdm
 import logging
 from pytorch_lightning.strategies import DDPStrategy
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 import datetime
 from multiprocessing import Manager
 import pickle
@@ -51,8 +52,7 @@ def parse_arguments():
     parser.add_argument('--num_epochs', type=int, default=150, help="Number of Epochs")
     parser.add_argument('--n_classes', type=int, default=5, help="Number of Levels")
     parser.add_argument('--pre_trained_model', type=str, default="", help="Path to your LLM model or Huggingface model")
-    parser.add_argument('--embedding_size', type=int, default=4096, help="Size of the embedding vectors")
-    parser.add_argument('--from_embedding', type=str2bool, required=True, help='Use Pre-computed embedding')
+    parser.add_argument('--motif_freq', type=str2bool, required=True, help='Use motif Frequency')
     parser.add_argument('--max_len', type=int, default=1024, help='The Sequence max Length(Tokenizer)')
     parser.add_argument('--order_levels', nargs='+', default=[1, 2, 3, 4, 5, 6], type=int, help='A list of order H-levels')
     parser.add_argument('--exclude_easy', type=str2bool, default=False, help='Exclude easy examples')
@@ -111,13 +111,13 @@ def read_and_tokenize(file_path,max_len, id2embedding,kmerlen=6, batch_size=500,
         id2embedding.update(local_dict)
 
 
-def create_sorted_embedding_array(id2embedding, embedding_size):
+def create_sorted_embedding_array(id2embedding, max_len):
 
     # Convert id2embedding keys to integers and find the maximum index
     int_indices = np.array([int(k) for k in id2embedding.keys()])
     max_index = np.max(int_indices)
     
-    embedding_array = np.zeros((max_index + 1, embedding_size), dtype=np.float16)
+    embedding_array = np.zeros((max_index + 1, max_len), dtype=np.float16)
 
     # Populate the array with the embeddings
     for idx in int_indices:
@@ -127,11 +127,12 @@ def create_sorted_embedding_array(id2embedding, embedding_size):
 
 
 
+
 class TripletLightningModel(pl.LightningModule):
     def __init__(self, args, data_module):
         super(TripletLightningModel, self).__init__()
         self.args = args
-        self.model = Tuner(pretrained_model=args.pre_trained_model, embedding_size=args.embedding_size, from_embedding=args.from_embedding)
+        self.model = Tuner(pretrained_model=args.pre_trained_model, motif_freq=args.motif_freq)
         self.criterion = TripletLoss(exclude_easy=args.exclude_easy, batch_hard=args.batch_hard, margin=args.margin, n_classes=args.n_classes)
         self.monitor = init_monitor()
         self.data_module=data_module
@@ -151,49 +152,60 @@ class TripletLightningModel(pl.LightningModule):
             
 
     def validation_step(self, batch, batch_idx):
-        # self.log('val_loss', 0, on_epoch=True, prog_bar=False)
+        # Ensure no gradient computation
+        with torch.no_grad():
+            X, Y, sim = batch
+            X, Y = X.to(self.device), Y.to(self.device)
+            
+            # Forward pass
+            anchor, pos, neg = self.model(X)
+            loss = self.criterion(anchor, pos, neg, Y, sim, self.monitor, self.current_epoch)
+            
+            # Calculate and log metrics
+            dist_ap = torch.norm(anchor - pos, p=2, dim=1)  # Distance for positive samples
+            dist_an = torch.norm(anchor - neg, p=2, dim=1)  # Distance for negative samples
+            
+            embeddings = torch.cat([anchor, pos, neg], dim=0)
+            self.monitor['pos'].append(dist_ap.mean().cpu().item())
+            self.monitor['neg'].append(dist_an.mean().cpu().item())
+            self.monitor['min'].append(embeddings.min(dim=1)[0].mean().cpu().item())
+            self.monitor['max'].append(embeddings.max(dim=1)[0].mean().cpu().item())
+            self.monitor['mean'].append(embeddings.mean(dim=1).mean().cpu().item())
+            self.monitor['loss'].append(loss.cpu().item())
+            self.monitor['norm'].append(torch.norm(embeddings, p='fro').cpu().item())
+            
+        return loss  # Return the loss for logging
+
+    
+    def on_validation_epoch_end(self):
         with open(self.args.monitor_file, 'a', newline='') as csvfile:
-            # Create a CSV writer object
             csv_writer = csv.writer(csvfile)
             csv_writer.writerow([
-                len(self.monitor['loss'])*self.args.batch_size,
-                (sum(self.monitor['loss'])-1) / len(self.monitor['loss'])*self.args.batch_size,
-                (sum(self.monitor['norm'])-1) / len(self.monitor['norm'])*self.args.batch_size,
-                (sum(self.monitor['pos'])-1) / len(self.monitor['pos'])*self.args.batch_size,
-                (sum(self.monitor['neg'])-1) / len(self.monitor['neg'])*self.args.batch_size,
-                (sum(self.monitor['min'])-1) / len(self.monitor['min'])*self.args.batch_size,
-                (sum(self.monitor['max'])-1) / len(self.monitor['max'])*self.args.batch_size,
-                (sum(self.monitor['mean'])-1) / len(self.monitor['mean'])*self.args.batch_size,
-                self.monitor['pos'][-1],
-                self.monitor['neg'][-1],
-                self.monitor['loss'][-1],
-            ])        
-       
-        return 0
-
+                len(self.monitor['loss']),
+                (sum(self.monitor['loss'])) / len(self.monitor['loss']),
+                (sum(self.monitor['norm'])) / len(self.monitor['norm']) ,
+                (sum(self.monitor['pos'])) / len(self.monitor['pos']),
+                (sum(self.monitor['neg'])) / len(self.monitor['neg']),
+                (sum(self.monitor['min'])) / len(self.monitor['min']),
+                (sum(self.monitor['max'])) / len(self.monitor['max']),
+                (sum(self.monitor['mean'])) / len(self.monitor['mean']) ,
+            ])
+        self.monitor = init_monitor()
     
-    # def on_validation_epoch_end(self):
-    #     # Perform custom validation tasks
-    #     if self.data_module.val20:
-    #         start = time.time()
-    #         # acc_dict, err_dict = testing(self.model, self.data_module.val20)  # Assuming these are dictionaries
-    #         validation_time = time.time() - start
-    #         # Log each accuracy and error value separately
-    #         # print("Each Task ,acc across levels :",[(f'val_acc_{key}', float(acc_dict[key][-1])) for key in acc_dict.keys()])  
-    #         self.log('val_time', validation_time, prog_bar=True, sync_dist=True)
-
-    
+        
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.args.learning_rate, amsgrad=True)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.args.learning_rate, amsgrad=True)
         
+        # Define the scheduler
+        scheduler = {
+            'scheduler': ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3),
+            'monitor': 'val_loss',  # Monitors 'val_loss' to decide on reducing the lr
+        }
         
-####### need to fix later
-class DummyDataset(Dataset):
-    def __len__(self):
-        return 1  # Just one batch
+        return [optimizer], [scheduler]        
 
-    def __getitem__(self, idx):
-        return 0, 1  # Dummy data, adjust as needed
+
+
 
 
 class LazyEmbeddingDict:
@@ -219,17 +231,15 @@ class TripletDataModule(pl.LightningDataModule):
         
     def prepare_data(self):
     
-        
         reorder(self.data_dir,self.args.order_levels)
+        print("Tokenizing.....")
+        read_and_tokenize(self.data_dir / "val.fasta",self.args.max_len, self.id2embedding)
+        read_and_tokenize(self.data_dir / "train.fasta",self.args.max_len, self.id2embedding)
+        print("Saving the id2embedding array",len(self.id2embedding))
+        np.save(self.embedding_dict_path, create_sorted_embedding_array(self.id2embedding, self.args.max_len))
+        self.id2embedding = dict()
         
-        if not self.args.from_embedding:
-            print("Tokenizing.....")
-            read_and_tokenize(self.data_dir / "val.fasta",self.args.max_len, self.id2embedding)
-            read_and_tokenize(self.data_dir / "train.fasta",self.args.max_len, self.id2embedding)
-            print("Saving the id2embedding array",len(self.id2embedding))
-            np.save(self.embedding_dict_path, create_sorted_embedding_array(self.id2embedding, self.args.max_len))
-            self.id2embedding = dict()
-            
+        
 
     def setup(self, stage=None):
         
@@ -238,6 +248,7 @@ class TripletDataModule(pl.LightningDataModule):
         self.train_splits, self.val, self.val_lookup = self.datasplitter.get_predef_splits()
         self.train_dataset = CustomDataset(self.train_splits, self.datasplitter, self.args.n_classes)
         self.train_dataset.get_example()
+        self.test_dataset = CustomDataset(self.val, self.datasplitter, self.args.n_classes)
         # self.val20 = Eval(self.val_lookup, self.val, self.datasplitter, self.args.n_classes)
 
 
@@ -245,16 +256,16 @@ class TripletDataModule(pl.LightningDataModule):
         return self._create_dataloader(self.train_dataset, self.args.batch_size)
 
     def val_dataloader(self):
-        # Return a DataLoader with a dummy dataset
-        dummy_dataset = DummyDataset()
-        return DataLoader(dummy_dataset, batch_size=1)
+        return self._create_dataloader(self.test_dataset, self.args.batch_size)
+
+
 
     def _create_dataloader(self, dataset, batch_size):
         my_collator = MyCollator()
         return DataLoader(dataset=dataset,
                           batch_size=batch_size,
                           shuffle=True,  # Shuffling is generally desirable for training
-                          drop_last=True,
+                          drop_last=False,
                           collate_fn=my_collator,
                           pin_memory=True,
                           num_workers=10  # Adjust based on your system's capabilities
@@ -281,7 +292,7 @@ def main():
     with open(args.monitor_file, 'w', newline='') as csvfile:
         # Create a CSV writer object
         csv_writer = csv.writer(csvfile)
-        csv_writer.writerow([ 'number','loss', 'norm', 'pos', 'neg', 'min', 'max', 'mean','last_batch_pos','last_batch_neg','last_batch_loss'])    
+        csv_writer.writerow([ 'number','loss', 'norm', 'pos', 'neg', 'min', 'max', 'mean'])    
 
    # Define the ModelCheckpoint callback
     checkpoint_callback = ModelCheckpoint(
@@ -306,7 +317,7 @@ def main():
     
     trainer = Trainer(
         max_epochs=args.num_epochs,
-        val_check_interval=0.1,
+        # val_check_interval=0.1,
         strategy=strategy,  # Switch between dp and None
         precision=16 if num_gpus > 0 else 32,  # 16-bit precision for GPUs, 32-bit for CPU
         accelerator='gpu' if num_gpus > 0 else 'cpu',  # Automatically use GPU or CPU
