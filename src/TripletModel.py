@@ -50,8 +50,8 @@ class Tuner(nn.Module):
             for param in self.pretrained_model.encoder.layer[-1].parameters():
                 param.requires_grad = True 
                 
-            # for param in self.pretrained_model.encoder.layer[-2].parameters():
-            #     param.requires_grad = True     
+            for param in self.pretrained_model.encoder.layer[-2].parameters():
+                param.requires_grad = True     
             
             # for param in self.pretrained_model.encoder.layer[-2].parameters():
             #     param.requires_grad = True

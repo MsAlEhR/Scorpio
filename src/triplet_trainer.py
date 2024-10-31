@@ -201,6 +201,7 @@ class TripletLightningModel(pl.LightningModule):
             'scheduler': ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3),
             'monitor': 'val_loss',  # Monitors 'val_loss' to decide on reducing the lr
         }
+        self.log('val_loss', loss, on_epoch=True, prog_bar=True)
         
         return [optimizer], [scheduler]        
 
