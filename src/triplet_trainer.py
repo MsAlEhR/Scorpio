@@ -16,7 +16,7 @@ from joblib import Parallel, delayed
 from utils import *
 from TripletModel import Tuner
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning import Trainer
+from pytorch_lightning import Trainer, seed_everything
 from torch.cuda.amp import GradScaler, autocast
 import warnings
 import torch.distributed as dist
@@ -190,18 +190,18 @@ class TripletLightningModel(pl.LightningModule):
                 (sum(self.monitor['max'])) / len(self.monitor['max']),
                 (sum(self.monitor['mean'])) / len(self.monitor['mean']) ,
             ])
+        self.log('val_loss',  sum(self.monitor['loss']) / len(self.monitor['loss']) , on_epoch=True, prog_bar=True)            
         self.monitor = init_monitor()
-    
         
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.learning_rate, amsgrad=True)
         
         # Define the scheduler
         scheduler = {
-            'scheduler': ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3),
+            'scheduler': ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3),
             'monitor': 'val_loss',  # Monitors 'val_loss' to decide on reducing the lr
         }
-        self.log('val_loss', loss, on_epoch=True, prog_bar=True)
+        
         
         return [optimizer], [scheduler]        
 
@@ -289,7 +289,10 @@ def main():
 
     save_args_to_yaml(args, Path(args.output) / "train_args.yaml")
     
-    seed_all(seed=42)
+    
+    seed_all(seed=83)
+    seed_everything(83)
+    
     with open(args.monitor_file, 'w', newline='') as csvfile:
         # Create a CSV writer object
         csv_writer = csv.writer(csvfile)

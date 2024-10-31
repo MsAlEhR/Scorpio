@@ -50,8 +50,8 @@ class Tuner(nn.Module):
             for param in self.pretrained_model.encoder.layer[-1].parameters():
                 param.requires_grad = True 
                 
-            for param in self.pretrained_model.encoder.layer[-2].parameters():
-                param.requires_grad = True     
+            # for param in self.pretrained_model.encoder.layer[-2].parameters():
+            #     param.requires_grad = True     
             
             # for param in self.pretrained_model.encoder.layer[-2].parameters():
             #     param.requires_grad = True
@@ -87,7 +87,7 @@ class Tuner(nn.Module):
             seq_len = counts.sum()  # Sum of valid counts
             if seq_len > 0:
                 freq_vectors[i] /= seq_len  # Normalize by valid sequence length
-    
+                freq_vectors[i] *= self.embedding_size # Scale the vector
         return freq_vectors
     
     def single_pass_freq(self, X):

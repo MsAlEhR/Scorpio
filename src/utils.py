@@ -229,9 +229,13 @@ class CustomDataset(torch.utils.data.Dataset):
         return pos, neg, pos_label, neg_label, pos_similarity
 
     def get_example(self):
-        # example_id = iter(self.id2embedding.keys()))
-        example_id=19
+        example_id= random.choice(list(self.id2label.keys()))
+        print(type(example_id), example_id) 
         example_label = self.id2label[example_id]
+        self.get_pair(example_id, example_label, verbose=True)
+        example_id= random.choice(list(self.id2label.keys()))
+        example_label = self.id2label[example_id]
+        self.get_pair(example_id, example_label, verbose=True)   
         self.get_pair(example_id, example_label, verbose=True)
         return None
     
