@@ -152,7 +152,7 @@ def read_fasta_or_fastq(file_path):
 def calculate_single_sequence_kmer_frequencies(sequence, sorted_vocab, k, sequence_len, index):
     sequence = sequence.upper()
     sequence_kmer_counts = Counter(sequence[j:j+k] for j in range(sequence_len - k + 1))
-    frequencies = np.array([sequence_kmer_counts.get(kmer, 0) / sequence_len for kmer in sorted_vocab], dtype=np.float16)
+    frequencies = np.array([sequence_kmer_counts.get(kmer, 0) / sequence_len for kmer in sorted_vocab], dtype=np.float16) * 10 # normalize and scale
     return index, frequencies
 
 def calculate_kmer_frequencies(sequences, k=6, n_jobs=16):
@@ -179,16 +179,17 @@ def load_data(max_len,db_fasta,test_fasta,cal_kmer_freq):
     print("Loading data ....")
     start = time.time()
     data_test, test_indices = read_fasta_or_fastq(test_fasta)
-    data_train, train_indices = read_fasta_or_fastq(db_fasta)
+    data_train, train_indices = read_fasta_or_fastq(db_fasta)  
+
     end = time.time()
     print("Loading data time:", end - start)
     print("Establishing initial encodings ....")
-    if cal_kmer_freq :
-        data_train=calculate_kmer_frequencies(data_train)
-        data_test=calculate_kmer_frequencies(data_test)
-    else:
-        data_train=kmer_tokenize(data_train,max_len) 
-        data_test=kmer_tokenize(data_test,max_len)
+    # if cal_kmer_freq :
+    #     data_train=calculate_kmer_frequencies(data_train)
+    #     data_test=calculate_kmer_frequencies(data_test)
+    # else:
+    data_train=kmer_tokenize(data_train,max_len) 
+    data_test=kmer_tokenize(data_test,max_len)
 
     return data_train,data_test,train_indices,test_indices
 
@@ -218,7 +219,6 @@ def load_model(weights_p,motif_freq,embedding_size):
     # model.embedding_size=embedding_size
     model.load_state_dict(state)
     model = model.eval()
-    print(model)
     print("Done")
     return model
 

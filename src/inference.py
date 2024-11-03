@@ -62,10 +62,10 @@ def load_data(max_len,test_fasta,cal_kmer_freq):
 
     data_test, test_indices = read_fasta_or_fastq(test_fasta)
 
-    if cal_kmer_freq :
-        data_test=calculate_kmer_frequencies(data_test)
-    else:
-        data_test=kmer_tokenize(data_test,max_len)
+    # if cal_kmer_freq :
+    #     data_test=calculate_kmer_frequencies(data_test)
+    # else:
+    data_test=kmer_tokenize(data_test,max_len)
     print("Done")
     return data_test,test_indices
 
@@ -223,6 +223,8 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
 
     # Loading Index
     index = faiss.read_index(os.path.join(db_path, 'faiss_index'))
+
+
     
     if torch.cuda.device_count() > 1:
         index = faiss.index_cpu_to_all_gpus(index)

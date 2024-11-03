@@ -87,13 +87,13 @@ class Tuner(nn.Module):
             seq_len = counts.sum()  # Sum of valid counts
             if seq_len > 0:
                 freq_vectors[i] /= seq_len  # Normalize by valid sequence length
-                freq_vectors[i] *= self.embedding_size # Scale the vector
+                freq_vectors[i] *= 10 # Scale the vector to surpass sparse
         return freq_vectors
     
     def single_pass_freq(self, X):
         # Calculate frequency vector for the anchor input and add 1 to all values
-        freq_X = self.calc_frequency(X)
-        pooled_output = self.Tuner(freq_X)
+        pooled_output = self.calc_frequency(X)
+        pooled_output = self.Tuner(pooled_output)
         return pooled_output
 
 
