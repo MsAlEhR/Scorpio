@@ -28,7 +28,7 @@ import yaml
 from joblib import Parallel, delayed
 import pytorch_lightning as pl
 import logging
-
+import subprocess
 
 
 
@@ -109,9 +109,8 @@ def compute_embeddings(model, raw_embedding_test,output,batch_size):
         print(f"Saved embeddings to {save_path}. Shape: {embeddings.shape}")
         return embeddings
 
-
     # Process test and train datasets
-    triplet_embedding_test = process_dataset(raw_embedding_test, f"{output}/val_embeddings.npy")
+    triplet_embedding_test = process_dataset(raw_embedding_test, f"{output}/embeddings.npy")
     print("Done")
     return triplet_embedding_test
 
@@ -223,7 +222,6 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
 
     # Loading Index
     index = faiss.read_index(os.path.join(db_path, 'faiss_index'))
-
 
     
     if torch.cuda.device_count() > 1:

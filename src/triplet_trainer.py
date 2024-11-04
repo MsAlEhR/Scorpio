@@ -143,9 +143,8 @@ class TripletLightningModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         X, Y, sim = batch
         X, Y = X.to(self.device), Y.to(self.device) 
-        with autocast():
-            anchor, pos, neg = self.model(X)
-            loss = self.criterion(anchor, pos, neg, Y, sim, self.monitor,self.current_epoch)
+        anchor, pos, neg = self.model(X)
+        loss = self.criterion(anchor, pos, neg, Y, sim, self.monitor,self.current_epoch)
         self.log('train_loss', loss, on_epoch=True, prog_bar=True)
 
         return loss
@@ -231,7 +230,7 @@ class TripletDataModule(pl.LightningDataModule):
         self.embedding_dict_path = self.data_dir / "encodings.npy"
         
     def prepare_data(self):
-    
+        # pass
         reorder(self.data_dir,self.args.order_levels)
         print("Tokenizing.....")
         read_and_tokenize(self.data_dir / "val.fasta",self.args.max_len, self.id2embedding)
@@ -318,7 +317,7 @@ def main():
     
     # Set devices based on the available hardware
     devices = num_gpus if num_gpus > 0 else 1  # 1 for CPU
-    
+    devices=[1,2,3]
     trainer = Trainer(
         max_epochs=args.num_epochs,
         # val_check_interval=0.1,

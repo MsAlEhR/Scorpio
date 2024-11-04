@@ -33,7 +33,7 @@ import logging
 from transformers import AutoTokenizer, AutoModel
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, TensorDataset
-
+import subprocess
 from transformers import logging
 logging.set_verbosity_error()
 
@@ -222,13 +222,7 @@ def load_model(weights_p,motif_freq,embedding_size):
     print("Done")
     return model
 
-# class AveragePool1dAlongAxis(nn.Module):
-#     def __init__(self, axis):
-#         super(AveragePool1dAlongAxis, self).__init__()
-#         self.axis = axis
 
-#     def forward(self, x, mask=None):
-#         return torch.mean(x, dim=self.axis)
 
 ## Custom Average Pooling Layer
 # class AveragePool1dAlongAxis(nn.Module):
@@ -283,7 +277,7 @@ def load_model(weights_p,motif_freq,embedding_size):
 #     # Create the new model with the averaging layer
 #     model = ModelWithAveraging(axis)
 #     # Move model to device and set to evaluation mode
-#     print(model)
+#     model.motif_freq= False
 #     model.to(device)
 #     model.eval()
 
