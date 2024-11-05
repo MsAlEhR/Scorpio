@@ -929,7 +929,6 @@ def get_baseline(test,n_classes):
 
 def testing(mdl, test, batch_size=30):
     model_device = next(mdl.parameters()).device 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     mdl = mdl.to(device)
     mdl.eval()
