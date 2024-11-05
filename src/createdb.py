@@ -37,6 +37,9 @@ import subprocess
 from transformers import logging
 logging.set_verbosity_error()
 
+
+    
+
 def read_fasta(file_path, buffer_size=4194304):
     x_header = []
     x_seq = []
@@ -284,6 +287,30 @@ def load_model(weights_p,motif_freq,embedding_size):
 #     return model
 
 
+def get_available_gpus(min_free_memory_gb=70):
+    available_gpus = []
+    try:
+        # Convert the required memory to MB
+        min_free_memory_mb = min_free_memory_gb * 1024
+
+        # Run nvidia-smi and parse the output
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,nounits,noheader"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        # Process output to find GPUs with enough free memory
+        free_memories = result.stdout.strip().split("\n")
+        for i, free_memory in enumerate(free_memories):
+            if int(free_memory) >= min_free_memory_mb:
+                available_gpus.append(i)
+                
+    except subprocess.CalledProcessError as e:
+        print("Error querying GPU memory:", e)
+    
+    return available_gpus
 
 
 
@@ -302,27 +329,29 @@ class EmbeddingModel(pl.LightningModule):
 
 
 
-def compute_embeddings(model, raw_embedding_test, raw_embedding_train, output, batch_size):
+def compute_embeddings(model, raw_embedding_test, raw_embedding_train, output, batch_size,args):
     print("Generating embeddings ...")
     
     # Wrap your model in a LightningModule
     embedding_model = EmbeddingModel(model)
 
+
     if torch.cuda.is_available():
-        num_gpus = torch.cuda.device_count()  # Get the number of available GPUs
+        num_device = get_available_gpus(args.required_memory_gb)  # Get the number of available GPUs
+        devices = selected_gpus[:args.num_device]
         trainer = pl.Trainer(
-            accelerator='gpu',        # Use GPU(s)
-            devices=num_gpus,         # Automatically use all available GPUs
-            precision=16,             # Use mixed precision for faster inference and training
-            strategy="dp" if num_gpus > 1 else None,  # Use Distributed Data Parallel if more than 1 GPU, otherwise use default
-            inference_mode=True       # Enable inference mode for optimizations
+            accelerator='gpu',       
+            devices=devices,         
+            precision=16,            
+            strategy="dp" if devices > 1 else None,  
+            inference_mode=True      
         )
     else:
         trainer = pl.Trainer(
-            accelerator='cpu',        # Use CPU if no GPUs are available
-            devices=1,                # Only one device (CPU)
-            precision=32,             # Default precision for CPU
-            inference_mode=True       # Enable inference mode for optimizations
+            accelerator='cpu',      
+            devices=num_device,              
+            precision=32,             
+            inference_mode=True     
         )
 
     def process_dataset(dataset, save_path):
@@ -411,7 +440,7 @@ def perform_search(index, dataset, indices,train_indices,number_hit=1):
 
 
 
-def main(batch_size, max_len, output, scorpio_model, db_fasta, db_embedding, cal_kmer_freq, val_fasta, metadata, val_embedding, num_distance):
+def main(batch_size, max_len, output, scorpio_model, db_fasta, db_embedding, cal_kmer_freq, val_fasta, metadata, val_embedding, num_distance,args):
 
     model_name = f"{scorpio_model}"
     weights_p =os.path.join(model_name, 'checkpoint.pt')
@@ -436,7 +465,7 @@ def main(batch_size, max_len, output, scorpio_model, db_fasta, db_embedding, cal
     raw_embedding_test = torch.as_tensor(raw_embedding_test)
 
     
-    triplet_embedding_test, triplet_embedding_train = compute_embeddings(model, raw_embedding_test, raw_embedding_train,output,batch_size)
+    triplet_embedding_test, triplet_embedding_train = compute_embeddings(model, raw_embedding_test, raw_embedding_train,output,batch_size,args)
     
     
     index=create_index(triplet_embedding_train,output)
@@ -468,7 +497,10 @@ if __name__ == "__main__":
     parser.add_argument("--val_embedding", type=str, help="Path to the embedding file for the validation sequences. Default is an empty string.", default="")
     parser.add_argument('--cal_kmer_freq', type=str2bool, default=False, help="Boolean flag to indicate whether to calculate k-mer frequency. Default is False.")
     parser.add_argument('--num_distance', type=int, default=2000, help="Number of distances to be calculated. Default is 2000.")
+    parser.add_argument("--num_device", type=int, help="Number of devices (GPUs or CPUs) to use for inference. Default is 1.", default=1)
+    parser.add_argument("--required_memory_gb", type=int, help="Amount of GPU memory required per device in GB. Default is 10.", default=10)
 
+    
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
@@ -477,5 +509,5 @@ if __name__ == "__main__":
 
     main(
         args.batch_size, args.max_len, args.output, args.scorpio_model, args.db_fasta, 
-        args.db_embedding, args.cal_kmer_freq, args.val_fasta, args.metadata, args.val_embedding, args.num_distance
+        args.db_embedding, args.cal_kmer_freq, args.val_fasta, args.metadata, args.val_embedding, args.num_distance,args
     )

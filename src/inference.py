@@ -27,9 +27,9 @@ from confidence_score import confidence_score,ConfNN
 import yaml
 from joblib import Parallel, delayed
 import pytorch_lightning as pl
-import logging
 import subprocess
-
+from transformers import logging
+logging.set_verbosity_error()
 
 
 from createdb import (
@@ -43,6 +43,7 @@ from createdb import (
     str2bool,
     extract_and_sort_headers,
     perform_search,
+    get_available_gpus,
     EmbeddingModel
 )
 
@@ -71,27 +72,31 @@ def load_data(max_len,test_fasta,cal_kmer_freq):
 
 
 
-def compute_embeddings(model, raw_embedding_test,output,batch_size):
+
+    
+
+def compute_embeddings(model, raw_embedding_test,output,batch_size,args):
     print("Generating embeddings ...")
     
     # Wrap your model in a LightningModule
     embedding_model = EmbeddingModel(model)
 
     if torch.cuda.is_available():
-        num_gpus = torch.cuda.device_count()  # Get the number of available GPUs
+        num_device = get_available_gpus(args.required_memory_gb)  # Get the number of available GPUs
+        devices = selected_gpus[:args.num_device]
         trainer = pl.Trainer(
-            accelerator='gpu',        # Use GPU(s)
-            devices=num_gpus,         # Automatically use all available GPUs
-            precision=16,             # Use mixed precision for faster inference and training
-            strategy="dp" if num_gpus > 1 else None,  # Use Distributed Data Parallel if more than 1 GPU, otherwise use default
-            inference_mode=True       # Enable inference mode for optimizations
+            accelerator='gpu',       
+            devices=devices,         
+            precision=16,            
+            strategy="dp" if devices > 1 else None,  
+            inference_mode=True      
         )
     else:
         trainer = pl.Trainer(
-            accelerator='cpu',        # Use CPU if no GPUs are available
-            devices=1,                # Only one device (CPU)
-            precision=32,             # Default precision for CPU
-            inference_mode=True       # Enable inference mode for optimizations
+            accelerator='cpu',      
+            devices=num_device,              
+            precision=32,             
+            inference_mode=True     
         )
 
     def process_dataset(dataset, save_path):
@@ -214,7 +219,7 @@ def parallel_group_apply(group,hierarchy):
     return calculate_confidence(group, levels=hierarchy)
 
 
-def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_embedding,  cal_kmer_freq, number_hit,metadata):
+def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_embedding,  cal_kmer_freq, number_hit,metadata,args):
 
     model_name = f"{scorpio_model}"
     weights_p = model_name+"/checkpoint.pt"
@@ -314,10 +319,7 @@ if __name__ == "__main__":
     parser.add_argument("--test_fasta", type=str, required=True, help="Path to the test FASTA file.")
     parser.add_argument("--test_embedding", type=str, default="", help="Path to the test embedding file. Default is an empty string.")
     parser.add_argument("--output", type=str, required=True, help="Directory to save the output files.")
-    parser.add_argument("--scorpio_model", type=str, help="Path to the Scorpio model file.")
-    parser.add_argument("--max_len", type=int, help="Maximum allowed length of sequences. Sequences longer than this will be truncated.")
     parser.add_argument("--batch_size", type=int, help="Number of sequences to process in a single batch.")
-    parser.add_argument("--cal_kmer_freq", type=str2bool, help="Boolean flag to indicate whether to calculate k-mer frequency.")
 
 
     args = parser.parse_args()
@@ -337,5 +339,6 @@ if __name__ == "__main__":
         config_params.get('test_fasta'), 
         config_params.get('max_len'), config_params.get('batch_size'),
         config_params.get('test_embedding'), 
-        config_params.get('cal_kmer_freq'), config_params.get('number_hit'),config_params.get('metadata')
+        config_params.get('cal_kmer_freq'), config_params.get('number_hit'),config_params.get('metadata'),
+        config_params
     )

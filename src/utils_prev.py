@@ -34,8 +34,6 @@ from concurrent.futures import ThreadPoolExecutor
 plt.switch_backend('agg')  # GPU is only available via SSH (no display)
 plt.clf()  # clear previous figures if already existing
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
 
 class CustomDataset(torch.utils.data.Dataset):
 
