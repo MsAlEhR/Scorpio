@@ -337,8 +337,8 @@ def compute_embeddings(model, raw_embedding_test, raw_embedding_train, output, b
 
 
     if torch.cuda.is_available():
-        num_device = get_available_gpus(args.required_memory_gb)  # Get the number of available GPUs
-        devices = selected_gpus[:args.num_device]
+        available_gpus = get_available_gpus(args.required_memory_gb)  # Get the number of available GPUs
+        devices = available_gpus[:args.num_device]
         trainer = pl.Trainer(
             accelerator='gpu',       
             devices=devices,         

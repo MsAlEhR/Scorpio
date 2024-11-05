@@ -34,6 +34,41 @@ from concurrent.futures import ThreadPoolExecutor
 plt.switch_backend('agg')  # GPU is only available via SSH (no display)
 plt.clf()  # clear previous figures if already existing
 
+def get_available_gpus(min_free_memory_gb=70):
+    available_gpus = []
+    try:
+        # Convert the required memory to MB
+        min_free_memory_mb = min_free_memory_gb * 1024
+
+        # Run nvidia-smi and parse the output
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,nounits,noheader"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        # Process output to find GPUs with enough free memory
+        free_memories = result.stdout.strip().split("\n")
+        for i, free_memory in enumerate(free_memories):
+            if int(free_memory) >= min_free_memory_mb:
+                available_gpus.append(i)
+                
+    except subprocess.CalledProcessError as e:
+        print("Error querying GPU memory:", e)
+    
+    return available_gpus
+
+
+
+  # Adjust this as needed
+if torch.cuda.is_available():
+    available_gpus = get_available_gpus(min_free_memory_gb=10)
+    selected_gpu = available_gpus[0] 
+    device = torch.device(f'cuda:{selected_gpu}')
+else :
+    device = torch.device('cpu')
+    print("No GPU with sufficient memory found. Using CPU!!!!!!")
 
 class CustomDataset(torch.utils.data.Dataset):
 
