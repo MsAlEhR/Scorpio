@@ -256,7 +256,7 @@ def trainer():
         # =================== testing =====================
         start = time.time()
 
-        acc, err = testing(model, val20)
+        acc, err = testing(model, val20,batch_size)
             
         test_time = time.time() - start
         

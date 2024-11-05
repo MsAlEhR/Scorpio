@@ -29,7 +29,7 @@ from tqdm import tqdm
 from Bio import SeqIO
 import faiss
 from concurrent.futures import ThreadPoolExecutor
-
+import subprocess
 
 plt.switch_backend('agg')  # GPU is only available via SSH (no display)
 plt.clf()  # clear previous figures if already existing
@@ -912,7 +912,7 @@ def dataloader(customdata, batch_size):
                                        shuffle=True,
                                        drop_last=True,
                                        collate_fn=my_collator,
-                                       num_workers=0
+                                       num_workers=12
                                        )
 
 

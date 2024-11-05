@@ -82,19 +82,19 @@ def compute_embeddings(model, raw_embedding_test,output,batch_size,args):
     embedding_model = EmbeddingModel(model)
 
     if torch.cuda.is_available():
-        available_gpus = get_available_gpus(args.required_memory_gb)  # Get the number of available GPUs
-        devices = available_gpus[:args.num_device]
+        available_gpus = get_available_gpus(args.get("required_memory_gb"))  # Get the number of available GPUs
+        devices = available_gpus[:args.get("num_device")]
         trainer = pl.Trainer(
             accelerator='gpu',       
             devices=devices,         
             precision=16,            
-            strategy="dp" if devices > 1 else None,  
+            strategy="dp" if len(devices) > 1 else None,  
             inference_mode=True      
         )
     else:
         trainer = pl.Trainer(
             accelerator='cpu',      
-            devices=num_device,              
+            devices=args.num_device,              
             precision=32,             
             inference_mode=True     
         )
@@ -256,7 +256,7 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
     raw_embedding_test = torch.tensor(raw_embedding_test).to("cpu")
 
     
-    triplet_embedding_test = compute_embeddings(model, raw_embedding_test,output,batch_size)
+    triplet_embedding_test = compute_embeddings(model, raw_embedding_test,output,batch_size,args)
 
     
 

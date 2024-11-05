@@ -343,13 +343,13 @@ def compute_embeddings(model, raw_embedding_test, raw_embedding_train, output, b
             accelerator='gpu',       
             devices=devices,         
             precision=16,            
-            strategy="dp" if devices > 1 else None,  
+            strategy="dp" if len(devices) > 1 else None,  
             inference_mode=True      
         )
     else:
         trainer = pl.Trainer(
             accelerator='cpu',      
-            devices=num_device,              
+            devices=args.num_device,              
             precision=32,             
             inference_mode=True     
         )
