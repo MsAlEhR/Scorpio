@@ -202,9 +202,8 @@ def load_data(max_len,db_fasta,test_fasta,cal_kmer_freq):
 
 def load_model(weights_p,motif_freq,embedding_size):
     print("Loading Model ....")
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    state = torch.load(weights_p, map_location=torch.device(device))['model_state_dict']
-    model = torch.load(weights_p, map_location=torch.device(device))["Tuner"]
+    state = torch.load(weights_p)['model_state_dict']
+    model = torch.load(weights_p)["Tuner"]
     new_state_dict = {}
     for key in state.keys():
         # Remove "model." prefix
@@ -227,7 +226,7 @@ def load_model(weights_p,motif_freq,embedding_size):
 
 
 
-## Custom Average Pooling Layer
+# # Custom Average Pooling Layer
 # class AveragePool1dAlongAxis(nn.Module):
 #     def __init__(self, axis):
 #         super(AveragePool1dAlongAxis, self).__init__()
@@ -249,7 +248,9 @@ def load_model(weights_p,motif_freq,embedding_size):
 # class ModelWithAveraging(nn.Module):
 #     def __init__(self, axis=1):
 #         super(ModelWithAveraging, self).__init__()
-#         self.pretrained_model = AutoModel.from_pretrained("MsAlEhR/MetaBERTa-bigbird-gene", output_hidden_states=True)
+        
+#         self.pretrained_model = AutoModel.from_pretrained("../../../model_repo/2023-December-31_11-39-50_AM", output_hidden_states=True)
+#         # self.pretrained_model = AutoModel.from_pretrained("MsAlEhR/MetaBERTa-bigbird-gene", output_hidden_states=True)
 #         self.avg_pooling = AveragePool1dAlongAxis(axis)  # Averaging layer
 
 #     def single_pass(self, X):
@@ -291,7 +292,7 @@ def get_available_gpus(min_free_memory_gb=70):
     available_gpus = []
     try:
         # Convert the required memory to MB
-        min_free_memory_mb = min_free_memory_gb * 1024
+        min_free_memory_mb = int(min_free_memory_gb) * 1024
 
         # Run nvidia-smi and parse the output
         result = subprocess.run(
@@ -300,7 +301,6 @@ def get_available_gpus(min_free_memory_gb=70):
             text=True,
             check=True
         )
-        
         # Process output to find GPUs with enough free memory
         free_memories = result.stdout.strip().split("\n")
         for i, free_memory in enumerate(free_memories):
@@ -338,6 +338,9 @@ def compute_embeddings(model, raw_embedding_test, raw_embedding_train, output, b
 
     if torch.cuda.is_available():
         available_gpus = get_available_gpus(args.required_memory_gb)  # Get the number of available GPUs
+        if len(available_gpus) == 0:
+            raise RuntimeError(f"No GPUs found with at least {args.required_memory_gb} GB available.")
+
         devices = available_gpus[:args.num_device]
         trainer = pl.Trainer(
             accelerator='gpu',       
@@ -498,7 +501,7 @@ if __name__ == "__main__":
     parser.add_argument('--cal_kmer_freq', type=str2bool, default=False, help="Boolean flag to indicate whether to calculate k-mer frequency. Default is False.")
     parser.add_argument('--num_distance', type=int, default=2000, help="Number of distances to be calculated. Default is 2000.")
     parser.add_argument("--num_device", type=int, help="Number of devices (GPUs or CPUs) to use for inference. Default is 1.", default=1)
-    parser.add_argument("--required_memory_gb", type=int, help="Amount of GPU memory required per device in GB. Default is 10.", default=10)
+    parser.add_argument("--required_memory_gb", type=int, help="Amount of GPU memory required per device in GB. Default is 10.", default=26)
 
     
     args = parser.parse_args()

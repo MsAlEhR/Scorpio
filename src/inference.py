@@ -72,9 +72,6 @@ def load_data(max_len,test_fasta,cal_kmer_freq):
 
 
 
-
-    
-
 def compute_embeddings(model, raw_embedding_test,output,batch_size,args):
     print("Generating embeddings ...")
     
@@ -83,6 +80,8 @@ def compute_embeddings(model, raw_embedding_test,output,batch_size,args):
 
     if torch.cuda.is_available():
         available_gpus = get_available_gpus(args.get("required_memory_gb"))  # Get the number of available GPUs
+        if len(available_gpus) == 0:
+            raise RuntimeError(f'No GPUs found with at least {args.get("required_memory_gb")} GB available.')
         devices = available_gpus[:args.get("num_device")]
         trainer = pl.Trainer(
             accelerator='gpu',       

@@ -64,6 +64,7 @@ def get_available_gpus(min_free_memory_gb=70):
   # Adjust this as needed
 if torch.cuda.is_available():
     available_gpus = get_available_gpus(min_free_memory_gb=10)
+   
     selected_gpu = available_gpus[0] 
     device = torch.device(f'cuda:{selected_gpu}')
 else :
