@@ -475,7 +475,7 @@ def main(batch_size, max_len, output, scorpio_model, db_fasta, db_embedding, cal
     
     if torch.cuda.device_count() == args.num_device:
         index = faiss.index_cpu_to_all_gpus(index)
-    elif torch.cuda.device_count()==1:
+    elif get_available_gpus(args.required_memory_gb)[0]==1:
         faiss.index_cpu_to_gpu(faiss.StandardGpuResources(), get_available_gpus(args.required_memory_gb)[0], index) 
     else:
         pass
