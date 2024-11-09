@@ -266,7 +266,9 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
 
     result_df = perform_search(index, triplet_embedding_test, test_indices,train_indices,int(number_hit))
     
-
+    
+    result_df.to_csv(f"{output}/Output.tsv",sep="\t",index=False)
+    
 
     model_dict = load_models_from_folder(db_path, ConfNN)
 
@@ -275,8 +277,7 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
     for level,model in tqdm(model_dict.items()):
         result_df[f"{level}_dist"]=test_distance_confidence(model, result_df[2].values)
 
-    
-    result_df.to_csv(f"{output}/Output.tsv",sep="\t",index=False)
+
     
 
     hierarchy,_,metadata = extract_and_sort_headers(metadata)
