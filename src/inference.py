@@ -231,8 +231,8 @@ def main(db_path, scorpio_model, output, test_fasta, max_len, batch_size, test_e
     if torch.cuda.device_count() == args.get("num_device"):
         index = faiss.index_cpu_to_all_gpus(index)
     elif len(get_available_gpus(args.get("required_memory_gb"))[:1])==1:
-        print("indexed GPU")
-        faiss.index_cpu_to_gpu(faiss.StandardGpuResources(), get_available_gpus(args.get("required_memory_gb"))[0], index) 
+        print("indexed GPU:",get_available_gpus(args.get("required_memory_gb"))[0])
+        index =faiss.index_cpu_to_gpu(faiss.StandardGpuResources(), get_available_gpus(args.get("required_memory_gb"))[0], index) 
     else:
         pass
         
