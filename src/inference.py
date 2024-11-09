@@ -148,7 +148,7 @@ def load_models_from_folder(folder_path, model_class):
 
 
 def test_distance_confidence(model, new_X):
-    device = torch.device(f"cuda:{get_available_gpus(args.get('required_memory_gb'))[0]}" if torch.cuda.is_available() else "cpu")
+    device = torch.device(f"cuda:{get_available_gpus(10)[0]}" if torch.cuda.is_available() else "cpu")
     model.to(device)
     
     new_X_tensor = torch.tensor(new_X, dtype=torch.float32).reshape(-1, 1).to(device)
