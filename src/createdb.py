@@ -202,8 +202,8 @@ def load_data(max_len,db_fasta,test_fasta,cal_kmer_freq):
 
 def load_model(weights_p,motif_freq,embedding_size):
     print("Loading Model ....")
-    state = torch.load(weights_p)['model_state_dict']
-    model = torch.load(weights_p)["Tuner"]
+    state = torch.load(weights_p, map_location=torch.device('cpu'))['model_state_dict']
+    model = torch.load(weights_p, map_location=torch.device('cpu'))['Tuner']
     new_state_dict = {}
     for key in state.keys():
         # Remove "model." prefix
