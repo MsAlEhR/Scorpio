@@ -24,6 +24,19 @@ wget https://zenodo.org/api/records/12175913/files-archive -O scorpio-gene-taxa.
 unzip scorpio-gene-taxa.zip -d scorpio-gene-taxa
 ```
 
+## Models Available at Zenodo  
+
+### Scorpio Models  
+- **ScorpioBigDynamic**  
+  [https://zenodo.org/record/14176840](https://zenodo.org/record/14176840)  
+
+- **ScorpioBigEmbed**  
+  [https://zenodo.org/records/14176823](https://zenodo.org/records/14176823)  
+
+### BigBird Model  
+Our pre-trained model, **MetaBERTa**, a version of BigBird trained on gene sequences, is available here:  
+[MetaBERTa-BigBird-Gene on Hugging Face](https://huggingface.co/MsAlEhR/MetaBERTa-bigbird-gene)  
+
 
 ## Installation
 
