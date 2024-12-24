@@ -30,7 +30,7 @@ SHELL ["conda", "run", "-n", "scorpio", "/bin/bash", "-c"]
 COPY setup.sh /app/setup.sh
 COPY scorpio /app/scorpio
 COPY createdb.py /app/createdb.py
-COPY triplet_trainer.py /app/triplet_trainer.py
+COPY trainer.py /app/trainer.py
 COPY inference.py /app/inference.py
 COPY confidence_score.py /app/confidence_score.py
 COPY utils.py /app/utils.py
