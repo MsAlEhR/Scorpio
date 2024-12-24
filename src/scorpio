@@ -7,8 +7,8 @@ case "$COMMAND" in
   createdb)
     python /opt/conda/envs/scorpio/bin/createdb.py "$@"
     ;;
-  triplet_trainer)
-    python /opt/conda/envs/scorpio/bin/triplet_trainer.py "$@"
+  trainer)
+    python /opt/conda/envs/scorpio/bin/trainer.py "$@"
     ;;
   inference)
     python /opt/conda/envs/scorpio/bin/inference.py "$@"
