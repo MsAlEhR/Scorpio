@@ -87,3 +87,17 @@ Saleh Refahi (sr3622 at drexel dot edu)
 
 Owner:
 Gail Rosen (gailr26 at drexel dot edu)
+
+Citation :
+```bash
+@article{refahi2025enhancing,
+  title={Enhancing nucleotide sequence representations in genomic analysis with contrastive optimization},
+  author={Refahi, Mohammadsaleh and Sokhansanj, Bahrad A and Mell, Joshua C and Brown, James R and Yoo, Hyunwoo and Hearne, Gavin and Rosen, Gail L},
+  journal={Communications Biology},
+  volume={8},
+  number={1},
+  pages={517},
+  year={2025},
+  publisher={Nature Publishing Group UK London}
+}
+```
